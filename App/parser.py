@@ -14,10 +14,9 @@ def equation_splitter(step:str):
 def clean_expression(expr: str) -> str:
     expr = expr.replace(" ", "").strip()
     expr = expr.replace("^", "**")
-    expr = re.sub(r"(\d)(x)", r"\1*\2", expr)
-    expr = re.sub(r"(\d)\(", r"1*\(", expr)
-    expr = re.sub(r"\)(\d|x|\()", r")*\1", expr)
+    expr = re.sub(r"(\d)(x|\()",r"\1*\2", expr)
     expr = re.sub(r"(x)\(", r"\1*(", expr)
+    expr = re.sub(r"\)(\d|x|\()", r")*\1", expr)
     return expr
 
 def evaluate_expression(expr: str, x_value: float) -> float:

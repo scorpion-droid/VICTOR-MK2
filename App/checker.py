@@ -4,7 +4,7 @@ from App.parser import equation_splitter, evaluate_expression
 def normalize_string(step: str) -> str:
     return step.replace(" ", "").strip()
 
-def solve_simple_equation(equation: str) -> float:
+def solve_linear_equation(equation: str) -> float:
     equation = normalize_string(equation)
     parts = equation_splitter(equation)
 
@@ -13,30 +13,24 @@ def solve_simple_equation(equation: str) -> float:
 
     left, right = parts
 
-    if left == "x":
-        return float(right)
+    def residual(x_value: float) -> float: 
+        return evaluate_expression(left, x_value) - evaluate_expression(right, x_value)
+    
+    f0=residual(0.0)
+    f1=residual(1.0)
+    slope = f1 - f0
 
-    if right == "x":
-        return float(left)
-
-    if left.endswith("x") and "+" not in left and "-" not in left[1:]:
-        coeff = left[:-1]
-        coeff = 1.0 if coeff == "" else float(coeff)
-        return float(right) / coeff
-
-    if left.endswith("x") and "+" in left:
-        coeff_part, const_part = left.split("x", 1)
-        coeff = 1.0 if coeff_part == "" else float(coeff_part)
-        const = float(const_part.replace("+", ""))
-        return (float(right) - const) / coeff
-
-    raise ValueError(f"Unsupported equation: {equation}")
+    if slope == 0:
+        if f0 == 0:
+            raise ValueError("Infinite solutions.")
+        raise ValueError("No solution.")
+    return -f0 / slope
 
 
 def equations_match(prev: str, curr: str) -> bool:
     try:
-        prev_solution = solve_simple_equation(prev)
-        curr_solution = solve_simple_equation(curr)
+        prev_solution = solve_linear_equation(prev)
+        curr_solution = solve_linear_equation(curr)
     except ValueError:
         return False
 

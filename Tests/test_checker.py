@@ -12,6 +12,9 @@ class TestChecker(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertEqual(result.first_error_index, 1)
 
+    def test_accepts_parentheses(self):     
+        result = detect_first_error(["2(x + 3) = 14", "2x + 6 = 14"])
+        self.assertTrue(result.passed)
 
 if __name__ == "__main__":
     unittest.main()
