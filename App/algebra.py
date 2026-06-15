@@ -1,12 +1,6 @@
 from __future__ import annotations
-
 import ast 
 from fractions import Fraction
-from platform import node
-from turtle import poly
-
-from matplotlib import scale
-from matplotlib.pyplot import step
 from App.parser import clean_expression, equation_splitter
 
 Polynomial = dict[int, Fraction]
@@ -121,14 +115,15 @@ def _node_to_poly(node: ast.AST) -> Polynomial:
 
     raise ValueError("Unsupported expression.")
 
-def normalize_signature (poly: Polynomial) -> tuple[tuple[int, Fraction], ...]:
+def normalize_signature(poly: Polynomial) -> tuple[tuple[int, Fraction], ...]:
     poly = _normalize(poly)
-    if not poly: 
+    if not poly:
         return ((0, Fraction(0)),)
-    lead_degree = max(poly[lead_degree])
+
+    lead_degree = max(poly)
     lead_coeff = poly[lead_degree]
-    normalised = scale(poly, Fraction(1,1) / lead_coeff)
-    return tuple(sorted(normalised.items()))
+    normalized = _scale(poly, Fraction(1, 1) / lead_coeff)
+    return tuple(sorted(normalized.items()))
 
 def equation_signature(left: str, right: str) -> tuple[tuple[int, Fraction], ...]: 
     left_poly= expression_to_poly(left)
@@ -136,7 +131,7 @@ def equation_signature(left: str, right: str) -> tuple[tuple[int, Fraction], ...
     diff = _sub(left_poly, right_poly)
     return normalize_signature(diff)
 
-def step_signature(step: str) -> tuple[tuple[int, Fraction], ...]:
+def step_signature(step: str) -> tuple[str, tuple[tuple [int, Fraction], ...]]:
     cleaned = step.replace(" ", "").strip()
     parts = equation_splitter(cleaned)
 

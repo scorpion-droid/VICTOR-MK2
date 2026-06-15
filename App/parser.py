@@ -1,4 +1,3 @@
-from platform import node
 import re
 import ast
 
