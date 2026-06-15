@@ -129,9 +129,9 @@ class MathOCRApp:
         self.result_text.delete("1.0", tk.END)
 
         try: 
-            steps = extract_step_from_image(self.image_path)
+            steps = extract_steps_from_image(self.image_path)
         except Exception as exc:
-            messagebox.showerro("OCR error", str(exc))
+            messagebox.showerror("OCR error", str(exc))
             self.status.config(text="OCR Failed.")
             return
         
@@ -151,12 +151,12 @@ class MathOCRApp:
 
         self.status.config(text="Checking Complete.")
 
-        def clear_all(self) -> None:
-            self.image_path = None
-            self.file_label.config(text="No image selected yet.")
-            self.ocr_text.delete("1.0", tk.END)
-            self.result_text.delete("1.0", tk.END)
-            self.status.config(text="Cleared.")
+    def clear_all(self) -> None:
+        self.image_path = None
+        self.file_label.config(text="No image selected yet.")
+        self.ocr_text.delete("1.0", tk.END)
+        self.result_text.delete("1.0", tk.END)
+        self.status.config(text="Cleared.")
 
 def main() -> None:
     root = tk.Tk()
