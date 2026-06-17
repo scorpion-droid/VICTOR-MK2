@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from functools import lru_cache
 from pathlib import Path
 
@@ -37,22 +38,51 @@ def get_ocr_reader() -> PaddleOCR:
 
 
 def preprocess_image(image: Image.Image) -> Image.Image:
+    return _preprocess_image(image, aggressive=False)
+
+
+def _preprocess_image(image: Image.Image, aggressive: bool) -> Image.Image:
     image = ImageOps.exif_transpose(image)
     image = image.convert("RGB")
     image = ImageOps.autocontrast(image)
 
-    if max(image.size) < 1200:
+    max_side = max(image.size)
+    if max_side >= 1800:
+        return image
+
+    scale = 1.3 if not aggressive else 1.5
+    if max_side < 1200 or aggressive:
         image = image.resize(
-            (int(image.width * 1.4), int(image.height * 1.4)),
+            (int(image.width * scale), int(image.height * scale)),
             Image.Resampling.LANCZOS,
         )
 
     return image
 
 
+MATH_REPLACEMENTS = str.maketrans(
+    {
+        "×": "*",
+        "÷": "/",
+        "−": "-",
+        "—": "-",
+        "–": "-",
+        "十": "+",
+        "一": "=",
+        "_": "1",
+        "l": "1",
+        "I": "1",
+        "|": "1",
+        "O": "0",
+        "o": "0",
+    }
+)
+
+
 def clean_ocr_text(text: str) -> str:
-    text = text.replace("×", "*").replace("÷", "/").replace("−", "-")
-    text = text.replace("{", "").replace("}", "").replace("|", "")
+    text = unicodedata.normalize("NFKC", text)
+    text = text.translate(MATH_REPLACEMENTS)
+    text = text.replace("{", "").replace("}", "")
     text = text.replace(" ", "")
     return text.strip()
 
@@ -73,32 +103,39 @@ def group_detections_into_lines(detections) -> list[str]:
     if not detections:
         return []
 
-    items: list[tuple[float, float, float, str]] = []
+    items: list[tuple[float, float, float, str, float]] = []
     heights: list[float] = []
 
-    for box, text in detections:
+    for item in detections:
+        if len(item) == 3:
+            box, text, score = item
+        else:
+            box, text = item
+            score = 1.0 
+            
         x0, y0, x1, y1 = _box_bounds(box)
         x_center = (x0 + x1) / 2
         y_center = (y0 + y1) / 2
         width = x1 - x0
         height = y1 - y0
-        items.append((y_center, x_center, width, str(text)))
+        items.append((y_center, x_center, width, str(text), float(score)))
         heights.append(height)
 
     tolerance = max(10.0, (sum(heights) / len(heights)) * 0.55)
     items.sort(key=lambda item: (item[0], item[1]))
 
-    lines: list[list[tuple[float, float, str]]] = []
-    current_line: list[tuple[float, float, str]] = []
+    lines: list[list[tuple[float, float, str, float]]] = []
+    current_line: list[tuple[float, float, str, float]] = []
     current_y: float | None = None
 
-    for y_center, x_center, width, text in items:
+    # FIXED: Added score here to match the 5 values appended to items!
+    for y_center, x_center, width, text, score in items:
         if current_y is None or abs(y_center - current_y) <= tolerance:
-            current_line.append((x_center, width, text))
+            current_line.append((x_center, width, text, score))
             current_y = y_center if current_y is None else (current_y + y_center) / 2
         else:
             lines.append(current_line)
-            current_line = [(x_center, width, text)]
+            current_line = [(x_center, width, text, score)]
             current_y = y_center
 
     if current_line:
@@ -108,15 +145,25 @@ def group_detections_into_lines(detections) -> list[str]:
     for line in lines:
         line.sort(key=lambda item: item[0])
         cleaned_tokens: list[str] = []
-        for _, _, token in line:
+        
+        is_line_blurry = False
+
+        for _, _, token, score in line: 
+            if score < 0.60: 
+                is_line_blurry = True
+
             cleaned = clean_ocr_text(token)
-            if cleaned:
+            if cleaned: 
                 cleaned_tokens.append(cleaned)
 
         if not cleaned_tokens:
             continue
 
         text = "".join(cleaned_tokens)
+        
+        if is_line_blurry:
+            text = text + " ?" 
+            
         rendered.append(text)
 
     return rendered
@@ -141,7 +188,13 @@ def _predict_lines(image: Image.Image) -> list[str]:
     result = results[0]
     boxes = result.get("rec_boxes", [])
     texts = result.get("rec_texts", [])
-    detections = list(zip(boxes, texts))
+    scores = result.get("rec_scores", [])
+
+    if not scores: 
+        scores = [1.0] * len(texts)
+
+    # FIXED: Added scores to the zip block so group_detections_into_lines receives it!
+    detections = list(zip(boxes, texts, scores))
     return group_detections_into_lines(detections)
 
 
@@ -152,15 +205,27 @@ def extract_text_from_image(image_path: str) -> str:
 
     raw_image = Image.open(path).convert("RGB")
     raw_lines = _predict_lines(raw_image)
+    raw_text = "\n".join(raw_lines)
 
     if len(raw_lines) >= 3 and any("=" in line for line in raw_lines):
-        return "\n".join(raw_lines)
+        return raw_text
 
     processed_lines = _predict_lines(preprocess_image(raw_image))
-    if len(processed_lines) > len(raw_lines):
-        return "\n".join(processed_lines)
+    processed_text = "\n".join(processed_lines)
 
-    return "\n".join(raw_lines)
+    if len(processed_lines) > len(raw_lines):
+        return processed_text
+
+    if len(raw_lines) <= 1:
+        aggressive_lines = _predict_lines(_preprocess_image(raw_image, aggressive=True))
+        aggressive_text = "\n".join(aggressive_lines)
+        if len(aggressive_lines) > len(raw_lines) or len(aggressive_text) > len(raw_text):
+            return aggressive_text
+
+    if len(processed_lines) == len(raw_lines) and len(processed_text) > len(raw_text):
+        return processed_text
+
+    return raw_text
 
 
 def extract_steps_from_image(image_path: str) -> list[str]:

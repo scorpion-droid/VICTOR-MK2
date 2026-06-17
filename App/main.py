@@ -3,6 +3,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from App.checker import detect_first_error
+from App.sanitiser import clean_noisy_ocr
 from App.ocr import extract_steps_from_image
 
 class MathOCRApp: 
@@ -77,7 +78,7 @@ class MathOCRApp:
         self.file_label = tk.Label(
             root, 
             text="No Image Selected Yet.", 
-            font = ("Old Standard TT", 10), 
+            font = ("Old Standard TT", 14), 
             bg="#f4f1ea",
             fg="#6b7280",
         )
@@ -101,7 +102,7 @@ class MathOCRApp:
         self.status = tk.Label(
             root,
             text="Ready.",
-            font=("Old Standard TT", 10),
+            font=("Old Standard TT", 13),
             bg="#f4f1ea",
             fg="#374151",
         )
@@ -122,28 +123,44 @@ class MathOCRApp:
 
     def run_ocr_and_check(self) -> None: 
         if not self.image_path:
-            messagebox.showwarning ("No image", "Please choose an image first,")
+            messagebox.showwarning("No image", "Please choose an image first.")
             return
         
         self.ocr_text.delete("1.0", tk.END)
         self.result_text.delete("1.0", tk.END)
 
         try: 
-            steps = extract_steps_from_image(self.image_path)
+            self.status.config(text="Extracting handwriting layout...")
+            self.root.update_idletasks()
+            raw_steps = extract_steps_from_image(self.image_path)
         except Exception as exc:
             messagebox.showerror("OCR error", str(exc))
             self.status.config(text="OCR Failed.")
             return
         
-        if not steps: 
+        if not raw_steps: 
             self.ocr_text.insert(tk.END, "(No readable text found.)")
             self.result_text.insert(tk.END, "Nothing to check.")
-            self.status.config(text="Image scanner, but not text found.")
+            self.status.config(text="Image scanned, but no text found.")
             return
         
+        self.status.config(text="Refining math text with AI...")
+        self.root.update_idletasks()
+        
+        try:
+            sanitized_text = clean_noisy_ocr(raw_steps)
+            steps = [line.strip() for line in sanitized_text.splitlines() if line.strip()]
+        except Exception as exc:
+            messagebox.showerror("Sanitizer error", f"AI cleaning failed: {exc}")
+            self.status.config(text="Sanitization Failed.")
+            return
+
         self.ocr_text.insert(tk.END, "\n".join(steps))
 
+
+        self.status.config(text="Verifying mathematical steps...")
         result = detect_first_error(steps)
+        
         self.result_text.insert(tk.END, f"Passed: {result.passed}\n")
         self.result_text.insert(tk.END, f"Message: {result.message}\n")
         if result.first_error_index is not None:
