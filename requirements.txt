@@ -1,0 +1,6 @@
+streamlit
+paddleocr
+google-genai
+python-dotenv
+numpy
+pillow

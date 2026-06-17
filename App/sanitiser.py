@@ -1,51 +1,37 @@
 import os
-from pathlib import Path
-from dotenv import load_dotenv
 from google import genai
+from google.genai.errors import APIError  # <-- Make sure this is imported exactly like this
+from dotenv import load_dotenv
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = PROJECT_ROOT / '.env'
+load_dotenv()
 
-if ENV_PATH.exists():
-    load_dotenv(dotenv_path=ENV_PATH)
-else:
-    raise FileNotFoundError(f"Could not find your .env file at: {ENV_PATH}")
-
-api_key = os.getenv("GEMINI_API_KEY")
-
-if not api_key:
-    raise ValueError(
-        f"Found .env at {ENV_PATH}, but 'GEMINI_API_KEY' is missing or empty inside it!"
-    )
-
-client = genai.Client(api_key=api_key)
+# Setup your client using the correct environment variable
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 def clean_noisy_ocr(raw_ocr_lines: list[str]) -> str:
-    """
-    Sends raw OCR lines to Gemini to sanitize math and handle unreadable areas.
-    """
     raw_text = "\n".join(raw_ocr_lines)
     
-    prompt = f"""
-    You are a mathematical text analyzer. I have raw, messy OCR output from a 
-    student's handwritten math homework. 
+    prompt = f"""You are an advanced mathematical OCR data cleaner. Your task is to clean noisy, fragmented, or out-of-order text lines produced by an OCR engine reading handwritten algebra problem steps. Output ONLY valid, cleaned, logical math lines in standard format, with one step per line. Do not include markdown code block syntax (like ```), and do not include explanatory text.
     
-    Your task:
-    1. Reconstruct the intended math equations.
-    2. If a line terminates or contains a '?', it means the physical writing was blurry or unreadable. 
-       Preserve the '?' symbol exactly in your output line. Do NOT try to guess or fill in the blanks.
-    3. Output ONLY the clean, standard algebraic equations (one per line).
-    4. Do not solve the equations.
-    
-    Raw OCR Output:
-    {raw_text}
-    """
-    
-    response = client.models.generate_content(
-        model="gemini-3.5-flash", 
-        contents=prompt
-    )
-    
-    return response.text
+Noisy OCR lines to clean:
+{raw_text}"""
 
-
+    # First attempt: Use the flagship model
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=prompt
+        )
+        return response.text
+    except APIError as e:
+        # If it's a 503 or any other API breakdown, swap to a highly available fallback
+        print(f"Primary model hit a snag (Status {e.code}). Shifting to fallback...")
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            )
+            return response.text
+        except Exception as fallback_error:
+            # Pass it back up to the UI if even the backup fails
+            raise fallback_error

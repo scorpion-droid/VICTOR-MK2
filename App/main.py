@@ -126,43 +126,62 @@ class MathOCRApp:
             messagebox.showwarning("No image", "Please choose an image first.")
             return
         
-        self.ocr_text.delete("1.0", tk.END)
-        self.result_text.delete("1.0", tk.END)
+        # 1. Determine the source of the steps: User-edited text or fresh OCR?
+        manual_text = self.ocr_text.get("1.0", tk.END).strip()
+        
+        if manual_text and manual_text != "(No readable text found.)":
+            # If the user has typed/edited in the box, use that instead of re-running OCR
+            steps = [line.strip() for line in manual_text.splitlines() if line.strip()]
+            self.status.config(text="Using manual edits...")
+        else:
+            # Otherwise, perform the fresh OCR extraction
+            self.ocr_text.delete("1.0", tk.END)
+            self.result_text.delete("1.0", tk.END)
+            try: 
+                self.status.config(text="Extracting handwriting layout...")
+                self.root.update_idletasks()
+                steps = extract_steps_from_image(self.image_path)
+            except Exception as exc:
+                messagebox.showerror("OCR error", str(exc))
+                self.status.config(text="OCR Failed.")
+                return
+            
+            if not steps: 
+                self.ocr_text.insert(tk.END, "(No readable text found.)")
+                self.result_text.insert(tk.END, "Nothing to check.")
+                self.status.config(text="Image scanned, but no text found.")
+                return
 
-        try: 
-            self.status.config(text="Extracting handwriting layout...")
-            self.root.update_idletasks()
-            raw_steps = extract_steps_from_image(self.image_path)
-        except Exception as exc:
-            messagebox.showerror("OCR error", str(exc))
-            self.status.config(text="OCR Failed.")
-            return
+            # Update the UI with initial OCR findings
+            self.ocr_text.insert(tk.END, "\n".join(steps))
         
-        if not raw_steps: 
-            self.ocr_text.insert(tk.END, "(No readable text found.)")
-            self.result_text.insert(tk.END, "Nothing to check.")
-            self.status.config(text="Image scanned, but no text found.")
-            return
-        
+        # 2. Refine the steps with AI
         self.status.config(text="Refining math text with AI...")
         self.root.update_idletasks()
         
         try:
-            sanitized_text = clean_noisy_ocr(raw_steps)
+            sanitized_text = clean_noisy_ocr(steps)
             steps = [line.strip() for line in sanitized_text.splitlines() if line.strip()]
+            
+            self.ocr_text.delete("1.0", tk.END)
+            self.ocr_text.insert(tk.END, "\n".join(steps))
         except Exception as exc:
-            messagebox.showerror("Sanitizer error", f"AI cleaning failed: {exc}")
+            error_msg = str(exc)
+            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                messagebox.showwarning("Rate Limit", "AI is busy. Please wait a moment and try again.")
+            else:
+                messagebox.showerror("Sanitizer error", f"AI cleaning failed: {exc}")
             self.status.config(text="Sanitization Failed.")
             return
 
-        self.ocr_text.insert(tk.END, "\n".join(steps))
-
-
+        # 3. Verify math steps
         self.status.config(text="Verifying mathematical steps...")
         result = detect_first_error(steps)
         
+        self.result_text.delete("1.0", tk.END)
         self.result_text.insert(tk.END, f"Passed: {result.passed}\n")
         self.result_text.insert(tk.END, f"Message: {result.message}\n")
+        
         if result.first_error_index is not None:
             self.result_text.insert(tk.END, f"First error in steps: {result.first_error_index + 1}\n")
 
