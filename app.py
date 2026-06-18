@@ -1,6 +1,8 @@
 import streamlit as st
-from App.ocr import extract_steps_from_image
-from App.sanitiser import clean_noisy_ocr
+import io 
+from PIL import Image
+import pillow_heif
+from App.sanitiser import clean_image
 from App.checker import detect_first_error
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
@@ -8,27 +10,35 @@ st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 st.title("V.I.C.T.O.R")
 st.subheader("Upload your math steps for verification")
 
-uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg", "heic", "heif"])
 
 if uploaded_file is not None:
     if st.button("Check Math"):
-        with st.spinner('Processing layout and checking math...'):
-            # Save bytes out locally so the backend reader can pull it
-            with open("temp_image.png", "wb") as f:
-                f.write(uploaded_file.getvalue())
+        with st.spinner('Analyzing handwriting and verifying steps...'):
+            
             
             try:
-                # 1. OCR Extraction
-                raw_steps = extract_steps_from_image("temp_image.png")
+                file_extension = uploaded_file.name.split(".")[-1].lower()
+                if file_extension in ["heic", "heif"]:
+                    heif_file = pillow_heif.read_heif(uploaded_file.getvalue())
+                    image = Image.frombytes(
+                        heif_file.mode, 
+                        heif_file.size, 
+                        heif_file.data, 
+                        "raw", 
+                        heif_file.mode, 
+                        heif_file.stride
+                    )
+                    image.save("temp_image.png", format="PNG")
+                else:
+                    with open("temp_image.png", "wb") as f:
+                        f.write(uploaded_file.getvalue())
+
+                sanatized = clean_image("temp_image.png")
+                steps = [s.strip() for s in sanatized.splitlines() if s.strip()]
                 
-                # 2. AI Sanitization
-                sanitized = clean_noisy_ocr(raw_steps)
-                steps = [s.strip() for s in sanitized.splitlines() if s.strip()]
-                
-                # Display what was read & cleaned
-                st.text_area("Sanitized Steps:", "\n".join(steps))
-                
-                # 3. Math Validation Engine
+                st.text_area("Extracted Steps:", "\n".join(steps))
+    
                 result = detect_first_error(steps)
                 if result.passed:
                     st.success(f"Passed: {result.message}")
@@ -36,6 +46,5 @@ if uploaded_file is not None:
                     st.error(f"Error found: {result.message}")
                     
             except Exception as e:
-                # Catch any unexpected server anomalies cleanly in the user interface
                 st.error("The AI service is experiencing heavy traffic or is temporarily down. Please wait a moment and try clicking 'Check Math' again.")
                 st.caption(f"Technical info: {e}")
