@@ -1,0 +1,19 @@
+credentials: 
+  usernames: 
+    students123: 
+      email: ronit.pandey2110@gmail.com
+      name: Ronit Pandey
+      password: $2b$12$kkfm.XdCVpToAo4wTWreku/WxAPuNBVx6pvQRpWaxHG24nTlgwALa
+
+    teachers456: 
+      email: rpandeyinc@gmail.com
+      name: Rex Frost
+      password: $2b$12$u37.l2fpyIzUTJ2DeUJmtuFPbzSNxBtTdi0fGmUK8.Oz5jrFH6JQa
+
+cookie: 
+  expiry_days: 90
+  key: some_signature_key_here
+  name: school_auth_cookie
+pre-authorized:
+  emails:
+    - allowed_student@school.edu
