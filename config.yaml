@@ -1,19 +1,55 @@
-credentials: 
-  usernames: 
-    students123: 
-      email: ronit.pandey2110@gmail.com
-      name: Ronit Pandey
-      password: $2b$12$kkfm.XdCVpToAo4wTWreku/WxAPuNBVx6pvQRpWaxHG24nTlgwALa
-
-    teachers456: 
-      email: rpandeyinc@gmail.com
-      name: Rex Frost
-      password: $2b$12$u37.l2fpyIzUTJ2DeUJmtuFPbzSNxBtTdi0fGmUK8.Oz5jrFH6JQa
-
-cookie: 
-  expiry_days: 90
-  key: some_signature_key_here
+cookie:
+  expiry_days: 30
+  key: school_secure_key_123
   name: school_auth_cookie
+credentials:
+  usernames:
+    ddnvjdwn:
+      classes:
+        54xqt0: MathAAHL
+      email: d@gmail.com
+      first_name: div
+      last_name: div
+      logged_in: false
+      password: $2b$12$i6c0dqoWMN0qhWjZRoPmrewoAE/bV5bQT.zJPIodMLwUmU8qdq1J6
+      role: teacher
+      roles: null
+    frosty_rex:
+      email: ronit.pandey2110@gmail.com
+      first_name: Ronit
+      history:
+      - date: 2026-06-21 18-00
+        equation: "2(x+3) = 8 \u2794 2x+6 = 8 \u2794 2x = 2 \u2794 x = 1"
+        message: No obvious errors detected.
+        status: Passed
+      - date: 2026-06-21 18-27
+        equation: "15x/7 + 12 = 42 \u2794 15x/7 = 30 \u2794 x = 7/15 x 30 (with 30\
+          \ crossed out and a 2 above it) \u2794 x = 14"
+        message: 'Step 3 could not be read: Only x is supported right now.'
+        status: Failed
+      last_name: Pandey
+      logged_in: false
+      password: $2b$12$ugMBHopD9RLwFXyMK8HlPedFLXk9m2csl.uA4GaXOi0ow.z1a9hia
+      password_hint: mom made it
+      roles: null
+    gobby:
+      classes: {}
+      email: gobsy_rex@gmail.com
+      first_name: gobby
+      last_name: pandey
+      logged_in: false
+      password: $2b$12$/BpzehMWYx8Jv40JditbpOGc/Mm1AHnMgPxIw/TqvaOCraQTdzNMG
+      password_hint: 1914-WWtwo
+      role: teacher
+      roles: null
+    squeaky-wheel:
+      classes: {}
+      email: d2@polemarchus.net.gov
+      first_name: Divya
+      last_name: Dube
+      logged_in: false
+      password: $2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36XfthS5WS18pHIL.FhZPhC
+      role: teacher
+      roles: null
 pre-authorized:
-  emails:
-    - allowed_student@school.edu
+  emails: []
