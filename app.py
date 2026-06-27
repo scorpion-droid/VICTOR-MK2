@@ -21,8 +21,21 @@ authenticator = stauth.Authenticate(
     config['cookie']['expiry_days']
 )
 
+st.session_state.setdefault("ocr_ready", False)
+st.session_state.setdefault("ocr_text", "")
 def generate_class_code():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+
+def render_login() -> None:
+    try:
+        authenticator.login(location="main", key="victor_main_login")
+    except Exception as exc:
+        message = str(exc)
+        if "User not authorized" in message:
+            st.warning("Your saved login session was stale, so I reset the auth cookie.")
+            st.caption("Please try logging in again.")
+        else:
+            raise
 
 if st.session_state["authentication_status"]:
     authenticator.logout('Logout', 'sidebar')
@@ -42,12 +55,11 @@ if st.session_state["authentication_status"]:
         
         teacher_classes = user_profile.get('classes', {}) 
 
-        with st.sidebar.expander("➕ Create a New Class", expanded=False):
+        with st.sidebar.expander("Create a New Class", expanded=False):
             new_class_name = st.text_input("Class Name (e.g., Calculus Level 2):")
             if st.button("Generate Class"):
                 if new_class_name.strip():
                     new_code = generate_class_code()
-
                     config['credentials']['usernames'][username]['classes'][new_code] = new_class_name.strip()
                     with open('config.yaml', 'w') as file:
                         yaml.dump(config, file, default_flow_style=False)
@@ -60,7 +72,7 @@ if st.session_state["authentication_status"]:
             st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
         else:
             class_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
-            selected_code = st.selectbox("📂 Select Classroom Section:", options=list(class_options.keys()), format_func=lambda x: class_options[x])
+            selected_code = st.selectbox("Select Classroom Section:", options=list(class_options.keys()), format_func=lambda x: class_options[x])
             
             all_users = config['credentials']['usernames']
             student_accounts = {
@@ -77,7 +89,7 @@ if st.session_state["authentication_status"]:
                 total_class_scans += len(s_history)
                 total_class_passed += sum(1 for item in s_history if item['status'] == "Passed")
                 
-            st.markdown(f"Dashboard for *{teacher_classes[selected_code]}*")
+            st.markdown(f"### Dashboard for *{teacher_classes[selected_code]}*")
             st.info(f"Share this enrollment code with students to let them join: **{selected_code}**")
             
             c1, c2, c3 = st.columns(3)
@@ -97,7 +109,7 @@ if st.session_state["authentication_status"]:
             else:
                 for s_user, s_data in student_accounts.items():
                     s_history = s_data.get('history', [])
-                    with st.expander(f"👤 {s_data['name']} (@{s_user}) — {len(s_history)} submissions"):
+                    with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history)} submissions"):
                         if not s_history:
                             st.caption("This student hasn't checked any equations yet.")
                         else:
@@ -115,7 +127,7 @@ if st.session_state["authentication_status"]:
                                 st.markdown("---")
 
     else:
-        tab1, tab2 = st.tabs(["🔍 V.I.C.T.O.R Checker", "📜 My Performance History"])
+        tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
 
         with tab1:
             st.title("V.I.C.T.O.R")
@@ -124,7 +136,13 @@ if st.session_state["authentication_status"]:
             uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg", "heic", "heif"])
 
             if uploaded_file is not None:
-                if st.button("Check Math"):
+                current_file_name = uploaded_file.name
+                if st.session_state.get("last_uploaded_file") != current_file_name:
+                    st.session_state["last_uploaded_file"] = current_file_name
+                    st.session_state["ocr_text"] = ""
+                    st.session_state["ocr_ready"] = False
+
+                if st.button("Run OCR"):
                     with st.spinner('Analyzing handwriting and verifying steps...'):
                         try:
                             file_extension = uploaded_file.name.split(".")[-1].lower()
@@ -138,13 +156,25 @@ if st.session_state["authentication_status"]:
                                 with open("temp_image.png", "wb") as f:
                                     f.write(uploaded_file.getvalue())
 
-                            sanatized = clean_image("temp_image.png")
-                            steps = [s.strip() for s in sanatized.splitlines() if s.strip()]
+                            st.session_state["ocr_text"] = clean_image("temp_image.png").strip()
+                            st.session_state["ocr_ready"] = True
+                        except Exception as e:
+                            st.error("The AI service is experiencing heavy traffic. Please try again.")
+                            st.caption(f"Technical info: {e}")
 
-                            st.text_area("Extracted Steps:", "\n".join(steps))
+                if st.session_state["ocr_ready"]:
+                    st.info("Review the OCR text below and fix any symbol mistakes before checking.")
+                    st.caption("Use `*` for multiplication and `x` for a variable.")
+                    st.text_area("Extracted Steps:", key="ocr_text", height=240)
 
+                    if st.button("Confirm OCR and Check"):
+                        steps = [s.strip() for s in st.session_state["ocr_text"].splitlines() if s.strip()]
+
+                        if not steps:
+                            st.warning("Please review or correct the OCR text first.")
+                        else:
                             result = detect_first_error(steps)
-                            
+
                             if result.passed:
                                 status_str = "Passed"
                                 st.success(f"Passed: {result.message}")
@@ -154,10 +184,10 @@ if st.session_state["authentication_status"]:
 
                             if 'history' not in config['credentials']['usernames'][username]:
                                 config['credentials']['usernames'][username]['history'] = []
-                            
+
                             import datetime
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
-                            
+
                             config['credentials']['usernames'][username]['history'].append({
                                 'date': timestamp,
                                 'equation': " ➔ ".join(steps),
@@ -167,10 +197,6 @@ if st.session_state["authentication_status"]:
 
                             with open('config.yaml', 'w') as file:
                                 yaml.dump(config, file, default_flow_style=False)
-
-                        except Exception as e:
-                            st.error("The AI service is experiencing heavy traffic. Please try again.")
-                            st.caption(f"Technical info: {e}")
 
         with tab2:
             st.title("Your Performance History")
@@ -199,25 +225,26 @@ if st.session_state["authentication_status"]:
                         st.markdown(f"*{item['message']}*")
                     st.markdown("---")
 
-else:
+elif st.session_state["authentication_status"] is False:
+    st.error('Username/password is incorrect')
     init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
-
     if init_mode == "Login":
-        authenticator.login(location="main", key="victor_main_login")
-        
-        if st.session_state["authentication_status"] is False:
-            st.error('Username/password is incorrect')
-        elif st.session_state["authentication_status"] is None:
-            st.warning('Please enter your username and password')
+        render_login()
 
-    elif init_mode == "Sign Up": 
-        try: 
+elif st.session_state["authentication_status"] is None or st.session_state["authentication_status"] == "":
+    init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
+    if init_mode == "Login":
+        render_login()
+        st.warning('Please enter your username and password')
+
+    elif init_mode == "Sign Up":
+        try:
             signup_role = st.radio("I am registering as a:", ["Student", "Teacher"], horizontal=True, key="signup_role_selector")
 
             if signup_role == "Student":
-                student_class_code = st.text_input("🔑 Enter Classroom Code from your Teacher:", key="signup_student_code_field")
+                student_class_code = st.text_input("Enter Classroom Code from your Teacher:", key="signup_student_code_field")
             else:
-                st.info("ℹAs a Teacher, you will be able to instantly generate your own custom classroom sections from your dashboard once logged in.")
+                st.info("As a Teacher, you will be able to instantly generate your own custom classroom sections from your dashboard once logged in.")
 
             st.markdown("---")
             st.caption("Fill in your account details below to finalize registration:")
@@ -228,20 +255,20 @@ else:
                 if signup_role == "Student":
                     config['credentials']['usernames'][username]['role'] = 'student'
                     config['credentials']['usernames'][username]['class_code'] = student_class_code.strip().lower() if student_class_code else 'unassigned'
-                    
+
                     with open('config.yaml', 'w') as file:
                         yaml.dump(config, file, default_flow_style=False)
-                        
+
                     st.success(f"Account created! You have successfully joined classroom code `{student_class_code.strip().lower()}`. Click the 'Login' tab to access V.I.C.T.O.R.")
-                
+
                 elif signup_role == "Teacher":
                     config['credentials']['usernames'][username]['role'] = 'teacher'
-                    config['credentials']['usernames'][username]['classes'] = {} 
-                    
+                    config['credentials']['usernames'][username]['classes'] = {}
+
                     with open('config.yaml', 'w') as file:
                         yaml.dump(config, file, default_flow_style=False)
-                        
+
                     st.success("Teacher profile registered perfectly! Flip over to the 'Login' tab to launch your administrative hub.")
-                        
+
         except Exception as e:
             st.error(e)
