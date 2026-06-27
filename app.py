@@ -23,6 +23,8 @@ authenticator = stauth.Authenticate(
 
 st.session_state.setdefault("ocr_ready", False)
 st.session_state.setdefault("ocr_text", "")
+st.session_state.setdefault("authentication_status", None)
+
 def generate_class_code():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
 
@@ -32,12 +34,18 @@ def render_login() -> None:
     except Exception as exc:
         message = str(exc)
         if "User not authorized" in message:
-            st.warning("Your saved login session was stale, so I reset the auth cookie.")
-            st.caption("Please try logging in again.")
+            authenticator.cookie_controller.delete_cookie()
+            for key in ("authentication_status", "name", "username", "logout"):
+                st.session_state.pop(key, None)
+
+            st.warning("Your saved login session was stale. Resetting environment...")
+            st.rerun()
         else:
             raise
 
-if st.session_state["authentication_status"]:
+auth_status = st.session_state.get("authentication_status")
+
+if auth_status:
     authenticator.logout('Logout', 'sidebar')
     st.write(f'Welcome back, *{st.session_state["name"]}*!')
 
@@ -173,6 +181,7 @@ if st.session_state["authentication_status"]:
                         if not steps:
                             st.warning("Please review or correct the OCR text first.")
                         else:
+                            st.write(steps)
                             result = detect_first_error(steps)
 
                             if result.passed:
@@ -225,13 +234,13 @@ if st.session_state["authentication_status"]:
                         st.markdown(f"*{item['message']}*")
                     st.markdown("---")
 
-elif st.session_state["authentication_status"] is False:
+elif auth_status is False:
     st.error('Username/password is incorrect')
     init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
     if init_mode == "Login":
         render_login()
 
-elif st.session_state["authentication_status"] is None or st.session_state["authentication_status"] == "":
+elif auth_status is None or auth_status == "":
     init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
     if init_mode == "Login":
         render_login()

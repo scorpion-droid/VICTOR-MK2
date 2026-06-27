@@ -1,142 +1,273 @@
 from __future__ import annotations
-import ast 
-from fractions import Fraction
-from App.parser import clean_expression, equation_splitter
 
-Polynomial = dict[int, Fraction]
+import re
 
-def _normalize(poly: Polynomial) -> Polynomial:
-    return {degree: coeff for degree, coeff in poly.items() if coeff != 0}
+from sympy import Eq, Poly, Symbol, expand, simplify, srepr, solve
+from sympy.parsing.sympy_parser import parse_expr
 
-def _constant(value: int | float | Fraction) -> Polynomial:
-    if isinstance(value, Fraction): 
-        coeff = value 
-    elif isinstance(value, int):
-        coeff = Fraction(value, 1)
-    elif isinstance(value, float):
-        coeff = Fraction(str(value))
-    else:
-        raise TypeError(f"Unsupported constant type: {type(value)!r}")
-    return {0: coeff}
+from App.parser import LOCAL_DICT, TRANSFORMATIONS, clean_expression
 
-def _x() -> Polynomial: 
-    return {1: Fraction(1, 1)}
+RELATION_OPERATORS = ("<=", ">=", "=", "<", ">")
 
-def _scale(poly: Polynomial, scalar: Fraction) -> Polynomial:
-    return _normalize({degree: coeff * scalar for degree, coeff in poly.items()})
 
-def _add(left: Polynomial, right: Polynomial) -> Polynomial:
-    result: Polynomial = dict(left)
-    for degree, coeff in right.items():
-        result[degree] = result.get(degree, Fraction(0,1)) + coeff
-    return _normalize(result)
+def _parse_math_expression(expression: str):
+    try:
+        return parse_expr(
+            clean_expression(expression),
+            transformations=TRANSFORMATIONS,
+            local_dict=LOCAL_DICT,
+            evaluate=True,
+        )
+    except Exception as exc:
+        raise ValueError(f"Could not parse expression: {expression}") from exc
 
-def _sub(left: Polynomial, right: Polynomial) -> Polynomial:
-    result: Polynomial = dict(left)
-    for degree, coeff in right.items():
-        result[degree] = result.get(degree, Fraction(0,1)) - coeff
-    return _normalize(result)
 
-def _mul(left: Polynomial, right: Polynomial) -> Polynomial:
-    result: Polynomial = {}
-    for left_degree, left_coeff in left.items():
-        for right_degree, right_coeff in right.items():
-            degree = left_degree + right_degree
-            coeff = left_coeff * right_coeff
-            result[degree] = result.get(degree, Fraction(0,1)) + coeff
-    return _normalize(result)
+def _canonicalize_symbols(expr):
+    free_symbols = sorted(expr.free_symbols, key=lambda symbol: symbol.name)
+    if not free_symbols:
+        return expr
 
-def _pow(poly: Polynomial, exponent: int) -> Polynomial: 
-    if exponent < 0:
-        raise ValueError("Negative exponents not supported.")  
-    result = _constant(1) 
-    for _ in range(exponent):
-        result = _mul(result, poly)
-    return result
+    replacements = {
+        symbol: Symbol(f"v{i}") for i, symbol in enumerate(free_symbols)
+    }
+    return expr.xreplace(replacements)
 
-def _const_int(poly: Polynomial) -> int: 
-    poly = _normalize(poly)
-    if set (poly) != {0}:
-        raise ValueError("Polynomial is not a constant.")
-    coeff = poly[0]
-    if coeff.denominator != 1:
-        raise ValueError("Polynomial is not an integer constant.")
-    return coeff.numerator
 
-def expression_to_poly(expression: str) -> Polynomial:
-    tree = ast.parse(clean_expression(expression), mode="eval")
-    return _node_to_poly(tree.body)
+def _canonicalize_expression(expr):
+    expr = simplify(expr)
+    expr = expand(expr)
+    expr = _canonicalize_symbols(expr)
+    return expr
 
-def _node_to_poly(node: ast.AST) -> Polynomial:
-    if isinstance(node, ast.Constant):
-        if isinstance(node.value, bool): 
-            raise ValueError("Boolean values are not supported.")
-        if isinstance(node.value, (int, float)):
-            return _constant(node.value)
-        raise ValueError("Only numeric constants are supported.")
-    
-    if isinstance(node, ast.Name):
-        if node.id != "x":
-            raise ValueError("Only x is supported right now.")
-        return _x()
-    
-    if isinstance(node, ast.UnaryOp):
-        value = _node_to_poly(node.operand)
-        if isinstance(node.op, ast.USub):
-            return _scale(value, Fraction(-1, 1))
-        if isinstance(node.op, ast.UAdd):
-            return value
-        raise ValueError("Unsupported unary operation.")
 
-    if isinstance(node, ast.BinOp):
-        left = _node_to_poly(node.left)
-        right = _node_to_poly(node.right)
+def _expression_signature(expr) -> str:
+    return srepr(_canonicalize_expression(expr))
 
-        if isinstance(node.op, ast.Add):
-            return _add(left, right)
-        
-        if isinstance(node.op, ast.Sub):
-            return _sub(left, right)
-        
-        if isinstance(node.op, ast.Mult):
-            return _mul(left, right)
-        
-        if isinstance(node.op, ast.Div):
-            divisor = _const_int(right)
-            if divisor == 0:
-                raise ValueError("Division by zero.")
-            return _scale(left, Fraction(1, divisor))
-        
-        if isinstance(node.op, ast.Pow):
-            exponent = _const_int(right)
-            return _pow(left, exponent)
-        
-        raise ValueError("Unsupported binary operation.")
 
-    raise ValueError("Unsupported expression.")
+def _equation_difference_signature(diff) -> str:
+    diff = simplify(diff)
 
-def normalize_signature(poly: Polynomial) -> tuple[tuple[int, Fraction], ...]:
-    poly = _normalize(poly)
-    if not poly:
-        return ((0, Fraction(0)),)
+    try:
+        free_symbols = sorted(diff.free_symbols, key=lambda symbol: symbol.name)
+        poly = Poly(diff, *free_symbols) if free_symbols else Poly(diff)
+        if not poly.is_zero:
+            diff = _canonicalize_expression(poly.monic().as_expr())
+            return srepr(diff)
+    except Exception:
+        pass
 
-    lead_degree = max(poly)
-    lead_coeff = poly[lead_degree]
-    normalized = _scale(poly, Fraction(1, 1) / lead_coeff)
-    return tuple(sorted(normalized.items()))
+    return _expression_signature(diff)
 
-def equation_signature(left: str, right: str) -> tuple[tuple[int, Fraction], ...]: 
-    left_poly= expression_to_poly(left)
-    right_poly= expression_to_poly(right)
-    diff = _sub(left_poly, right_poly)
-    return normalize_signature(diff)
 
-def step_signature(step: str) -> tuple[str, tuple[tuple [int, Fraction], ...]]:
+def _split_step_parts(step: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[;\n]+", step) if part.strip()]
+
+
+def split_step_parts(step: str) -> list[str]:
+    return _split_step_parts(step)
+
+
+def _split_relation(part: str):
+    for operator in ("<=", ">=", "=", "<", ">"):
+        if operator in part:
+            left, right = part.split(operator, 1)
+            return left, operator, right
+    return None
+
+
+def _flip_relation(operator: str) -> str:
+    return {
+        "<": ">",
+        ">": "<",
+        "<=": ">=",
+        ">=": "<=",
+    }[operator]
+
+
+def _normalize_inequality(left, operator: str, right):
+    diff = simplify(left - right)
+    diff = _canonicalize_expression(diff)
+
+    try:
+        free_symbols = sorted(diff.free_symbols, key=lambda symbol: symbol.name)
+        poly = Poly(diff, *free_symbols) if free_symbols else Poly(diff)
+        lead_coeff = poly.LC()
+        if getattr(lead_coeff, "is_number", False) and lead_coeff.is_negative:
+            return _flip_relation(operator), _canonicalize_expression(-diff)
+    except Exception:
+        pass
+
+    return operator, diff
+
+
+def _part_signature(part: str):
+    relation = _split_relation(part)
+    if relation is None:
+        try:
+            return ("expression", _expression_signature(_parse_math_expression(part)))
+        except Exception:
+            return ("expression", "parse_error")
+
+    left_text, operator, right_text = relation
+    try:
+        left = _parse_math_expression(left_text)
+        right = _parse_math_expression(right_text)
+    except Exception:
+        return ("equation", "parse_error")
+
+    if operator == "=":
+        return ("equation", _equation_difference_signature(left - right))
+
+    normalized_operator, diff = _normalize_inequality(left, operator, right)
+    return ("inequality", normalized_operator, _expression_signature(diff))
+
+
+def _parse_relation(part: str):
+    relation = _split_relation(part)
+    if relation is None:
+        return None
+
+    left_text, operator, right_text = relation
+    left = _parse_math_expression(left_text)
+    right = _parse_math_expression(right_text)
+    return left, operator, right
+
+
+def solve_system_from_steps(steps: list[str]):
+    equations = []
+    symbols = set()
+
+    for step in steps:
+        for part in _split_step_parts(step):
+            relation = _split_relation(part)
+            if relation is None or relation[1] != "=":
+                return None
+
+            left_text, _, right_text = relation
+            try:
+                left = _parse_math_expression(left_text)
+                right = _parse_math_expression(right_text)
+            except Exception:
+                return None
+            equations.append(Eq(left, right))
+            symbols.update(left.free_symbols)
+            symbols.update(right.free_symbols)
+
+    if len(equations) < 2:
+        return None
+
+    ordered_symbols = sorted(symbols, key=lambda symbol: symbol.name)
+    if not ordered_symbols:
+        return None
+
+    try:
+        solution = solve(equations, ordered_symbols, dict=True)
+    except Exception:
+        return None
+
+    if len(solution) != 1:
+        return None
+
+    return solution[0]
+
+
+def can_form_equation_system(steps: list[str]) -> bool:
+    equations_seen = 0
+
+    for step in steps:
+        for part in _split_step_parts(step):
+            relation = _split_relation(part)
+            if relation is None or relation[1] != "=":
+                return False
+            equations_seen += 1
+
+    return equations_seen >= 2
+
+
+def step_holds_under_assignment(step: str, assignment: dict) -> bool:
+    for part in _split_step_parts(step):
+        parsed = _parse_relation(part)
+        if parsed is None:
+            return False
+
+        left, operator, right = parsed
+        left_value = simplify(left.subs(assignment))
+        right_value = simplify(right.subs(assignment))
+
+        if operator == "=":
+            if simplify(left_value - right_value) != 0:
+                return False
+        elif operator == "<":
+            if not bool(left_value < right_value):
+                return False
+        elif operator == ">":
+            if not bool(left_value > right_value):
+                return False
+        elif operator == "<=":
+            if not bool(left_value <= right_value):
+                return False
+        elif operator == ">=":
+            if not bool(left_value >= right_value):
+                return False
+        else:
+            return False
+
+    return True
+
+
+def _system_signature(parts: list[str]):
+    equations = []
+    symbols = set()
+
+    for part in parts:
+        relation = _split_relation(part)
+        if relation is None or relation[1] != "=":
+            return tuple(sorted(_part_signature(part) for part in parts))
+
+        left_text, _, right_text = relation
+        try:
+            left = _parse_math_expression(left_text)
+            right = _parse_math_expression(right_text)
+        except Exception:
+            return tuple(sorted(_part_signature(part) for part in parts))
+        equations.append(Eq(left, right))
+        symbols.update(left.free_symbols)
+        symbols.update(right.free_symbols)
+
+    ordered_symbols = sorted(symbols, key=lambda symbol: symbol.name)
+    try:
+        solution = solve(equations, ordered_symbols, dict=True)
+        if not solution:
+            return ("system", "no_solution")
+
+        canonical_solutions = []
+        for solution_map in solution:
+            canonical_items = []
+            for symbol in ordered_symbols:
+                value = solution_map.get(symbol, symbol)
+                canonical_value = _canonicalize_expression(value)
+                canonical_items.append((symbol.name, srepr(canonical_value)))
+            canonical_solutions.append(tuple(canonical_items))
+
+        return ("system", tuple(sorted(canonical_solutions)))
+    except Exception:
+        return tuple(sorted(_part_signature(part) for part in parts))
+
+
+def step_signature(step: str):
     cleaned = step.replace(" ", "").strip()
-    parts = equation_splitter(cleaned)
+    parts = _split_step_parts(cleaned)
 
-    if parts is None:
-        return ("expression", normalize_signature(expression_to_poly(cleaned)))
+    if not parts:
+        return ("empty",)
 
-    left, right = parts
-    return ("equation", equation_signature(left, right))
+    if len(parts) > 1:
+        system_signature = _system_signature(parts)
+        if isinstance(system_signature, tuple) and system_signature and system_signature[0] == "system":
+            return system_signature
+        return ("system", system_signature)
+
+    signatures = tuple(sorted(_part_signature(part) for part in parts))
+    if len(signatures) == 1:
+        return signatures[0]
+    return ("system", signatures)

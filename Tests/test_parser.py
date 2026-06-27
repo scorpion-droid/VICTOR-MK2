@@ -10,6 +10,7 @@ class TestParser(unittest.TestCase):
     def test_evaluate_expression(self):
         self.assertEqual(evaluate_expression("2x + 6", 4), 14)
         self.assertEqual(evaluate_expression("x + 3", 2), 5)
+        self.assertEqual(evaluate_expression("2y + 6", 4), 14)
 
 
 if __name__ == "__main__":

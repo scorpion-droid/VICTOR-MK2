@@ -1,62 +1,74 @@
-import re
-import ast
+from __future__ import annotations
 
-def equation_splitter(step:str): 
-    step= step.replace(" ", "").strip()
+from sympy import Abs, E, pi, simplify, sqrt
+from sympy.parsing.sympy_parser import (
+    convert_xor,
+    implicit_multiplication_application,
+    parse_expr,
+    standard_transformations,
+)
+
+TRANSFORMATIONS = standard_transformations + (
+    convert_xor,
+    implicit_multiplication_application,
+)
+
+LOCAL_DICT = {
+    "Abs": Abs,
+    "E": E,
+    "pi": pi,
+    "sqrt": sqrt,
+}
+
+
+def equation_splitter(step: str):
+    step = step.replace(" ", "").strip()
 
     if "=" not in step:
         return None
-    
+
     left, right = step.split("=", 1)
     return left, right
 
+
 def clean_expression(expr: str) -> str:
     expr = expr.replace(" ", "").strip()
-    expr = expr.replace("^", "**")
-    expr = re.sub(r"(\d)(x|\()",r"\1*\2", expr)
-    expr = re.sub(r"(x)\(", r"\1*(", expr)
-    expr = re.sub(r"\)(\d|x|\()", r")*\1", expr)
+    expr = expr.replace("×", "*").replace("÷", "/")
+    expr = expr.replace("−", "-").replace("—", "-").replace("–", "-")
     return expr
 
+
+def _parse_expression(expr: str):
+    cleaned = clean_expression(expr)
+    try:
+        return parse_expr(
+            cleaned,
+            transformations=TRANSFORMATIONS,
+            local_dict=LOCAL_DICT,
+            evaluate=True,
+        )
+    except Exception as exc:
+        raise ValueError(f"Could not parse expression: {expr}") from exc
+
+
 def evaluate_expression(expr: str, x_value: float) -> float:
-    expr = clean_expression(expr)
-    tree = ast.parse(expr, mode='eval')
-    return _eval_node(tree.body, x_value)
+    parsed = _parse_expression(expr)
+    free_symbols = sorted(parsed.free_symbols, key=lambda symbol: symbol.name)
 
-def _eval_node(node, x_value: float) -> float:
-    
-    if isinstance(node, ast.Constant):
-        return node.value
+    if not free_symbols:
+        result = simplify(parsed)
+    elif len(free_symbols) == 1:
+        result = simplify(parsed.subs(free_symbols[0], x_value))
+    else:
+        raise ValueError("Only one variable is supported in evaluate_expression.")
 
-    if isinstance(node, ast.Name):
-        if node.id != "x":
-            raise ValueError("Only x is supported right now.")
-        return x_value
-   
-    if isinstance(node, ast.BinOp):
-        left = _eval_node(node.left, x_value)
-        right = _eval_node(node.right, x_value)
+    if getattr(result, "is_Integer", False):
+        return int(result)
 
-        if isinstance(node.op, ast.Add):
-            return left + right
-        
-        if isinstance(node.op, ast.Sub):
-            return left - right
-        
-        if isinstance(node.op, ast.Mult):
-            return left * right
-        
-        if isinstance(node.op, ast.Div):
-            return left / right
-        
-        if isinstance(node.op, ast.Pow):
-            return left ** right
-        
-        if isinstance(node, ast.UnaryOp): 
-            value = _eval_node(node.operand, x_value)
-            if isinstance(node.op, ast.USub):
-                return -value
-            if isinstance(node.op, ast.UAdd):
-                return value
-            
-        raise ValueError("Unsupported operation.")
+    if getattr(result, "is_Rational", False) and result.q == 1:
+        return int(result)
+
+    if getattr(result, "is_number", False):
+        return float(result)
+
+    return result
