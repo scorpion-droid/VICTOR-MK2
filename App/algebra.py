@@ -133,6 +133,105 @@ def _parse_relation(part: str):
     return left, operator, right
 
 
+def parse_step_relation(step: str):
+    parts = _split_step_parts(step)
+    if len(parts) != 1:
+        return None
+    return _parse_relation(parts[0])
+
+
+def is_single_symbol(expr) -> bool:
+    return getattr(expr, "is_Symbol", False)
+
+
+def simplify_with_assignment(expr, assignment: dict):
+    return simplify(expr.subs(assignment))
+
+
+def formula_chain_matches(steps: list[str]) -> bool:
+    if len(steps) < 2:
+        return False
+
+    first_relation = parse_step_relation(steps[0])
+    if first_relation is None:
+        return False
+
+    formula_lhs, formula_operator, formula_rhs = first_relation
+    if formula_operator != "=":
+        return False
+
+    assignments = {}
+    if is_single_symbol(formula_lhs):
+        formula_symbol = formula_lhs
+        formula_rhs_expr = formula_rhs
+    elif is_single_symbol(formula_rhs):
+        formula_symbol = formula_rhs
+        formula_rhs_expr = formula_lhs
+    else:
+        return False
+
+    for index, step in enumerate(steps[1:], start=1):
+        if "=" not in step:
+            if index != len(steps) - 1:
+                return False
+            try:
+                step_expr = _parse_math_expression(step)
+                if simplify_with_assignment(step_expr, assignments) != simplify_with_assignment(formula_rhs_expr, assignments):
+                    return False
+            except Exception:
+                return False
+            continue
+
+        relation = parse_step_relation(step)
+        if relation is None:
+            return False
+
+        left, operator, right = relation
+        if operator != "=":
+            return False
+
+        if is_single_symbol(left) and left != formula_symbol:
+            try:
+                assignments[left] = simplify_with_assignment(right, assignments)
+            except Exception:
+                return False
+            continue
+
+        if is_single_symbol(right) and right != formula_symbol:
+            try:
+                assignments[right] = simplify_with_assignment(left, assignments)
+            except Exception:
+                return False
+            continue
+
+        try:
+            expected_rhs = simplify_with_assignment(formula_rhs_expr, assignments)
+            left_value = simplify_with_assignment(left, assignments)
+            right_value = simplify_with_assignment(right, assignments)
+
+            if left_value == formula_symbol and right_value == expected_rhs:
+                continue
+            if right_value == formula_symbol and left_value == expected_rhs:
+                continue
+            if simplify(left_value - expected_rhs) == 0:
+                continue
+            if simplify(right_value - expected_rhs) == 0:
+                continue
+            if simplify(left_value - formula_symbol) == 0:
+                return False
+            if simplify(right_value - formula_symbol) == 0:
+                return False
+            if left_value == right_value:
+                continue
+            if left_value == expected_rhs or right_value == expected_rhs:
+                continue
+            return False
+        except Exception:
+            return False
+
+    return True
+
+
 def solve_system_from_steps(steps: list[str]):
     equations = []
     symbols = set()

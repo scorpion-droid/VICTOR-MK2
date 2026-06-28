@@ -71,10 +71,46 @@ if auth_status:
                     config['credentials']['usernames'][username]['classes'][new_code] = new_class_name.strip()
                     with open('config.yaml', 'w') as file:
                         yaml.dump(config, file, default_flow_style=False)
-                    st.success(f"Created! Code: **{new_code}**")
+                    st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
                     st.rerun()
                 else:
                     st.error("Please enter a class name.")
+
+
+        with st.sidebar.expander("Delete an Existing Class", expanded=False):
+            if not teacher_classes:
+                st.caption("You don't have any classes to delete yet.")
+            else:
+                delete_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
+                class_to_delete_code = st.selectbox(
+                    "Select Class to Permanently Delete:",
+                    options=list(delete_options.keys()),
+                    format_func=lambda x: delete_options[x],
+                    key="delete_class_select"
+                )
+
+                confirm_delete = st.checkbox(f"I understand this deletes all logs associated with code {class_to_delete_code}", key="confirm_delete_chk")
+                
+                if st.button("Permanently Delete Class", type="primary"):
+                    if confirm_delete:
+                        deleted_class_name = teacher_classes[class_to_delete_code]
+                        config['credentials']['usernames'][username]['classes'].pop(class_to_delete_code, None)
+                        with open('config.yaml', 'w') as file:
+                            yaml.dump(config, file, default_flow_style=False)
+
+                        st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
+                        
+                        st.rerun()
+                    else:
+                        st.error("Please check the confirmation box before deleting.")
+
+        if "class_creation_success" in st.session_state:
+            st.success(st.session_state["class_creation_success"])
+            del st.session_state["class_creation_success"]
+
+        if "class_deletion_success" in st.session_state:
+            st.error(st.session_state["class_deletion_success"])
+            del st.session_state["class_deletion_success"]
 
         if not teacher_classes:
             st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
@@ -110,29 +146,81 @@ if auth_status:
                 st.metric(label="Class Accuracy Rate", value=class_rate)
                 
             st.markdown("---")
-            st.markdown("Student Roster & Live Activity Logs")
             
-            if not student_accounts:
-                st.caption("No students have entered this classroom code yet.")
-            else:
+            tab_analytics, tab_roster = st.tabs(["Concept Analytics Insights", "Student Roster & Live Logs"])
+            
+            with tab_analytics:
+                st.subheader("Classroom Misconception Breakdown")
+                
+                error_counts = {
+                    "Sign Error": 0, 
+                    "Distribution Error": 0, 
+                    "Arithmetic Error": 0, 
+                    "Variable Mismatch": 0, 
+                    "Conceptual/Other": 0
+                }
+                has_failures = False
+                
                 for s_user, s_data in student_accounts.items():
-                    s_history = s_data.get('history', [])
-                    with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history)} submissions"):
-                        if not s_history:
-                            st.caption("This student hasn't checked any equations yet.")
+                    for log in s_data.get('history', []):
+                        if log.get('status') == "Failed":
+                            e_type = log.get('error_type', 'Conceptual/Other')
+                            if e_type in error_counts:
+                                error_counts[e_type] += 1
+                                has_failures = True
+                
+                if not has_failures:
+                    st.success("Zero student errors recorded in this section yet! Everything balances perfectly.")
+                else:
+                    col_chart, col_insights = st.columns([3, 2])
+                    
+                    with col_chart:
+                        st.caption("Mistake frequencies detected across all collective submissions:")
+                        st.bar_chart(error_counts)
+                        
+                    with col_insights:
+                        st.markdown("#### Automated Action Items")
+                        total_errors = sum(error_counts.values())
+                        most_common_error = max(error_counts, key=error_counts.get)
+                        percentage = int((error_counts[most_common_error] / total_errors) * 100)
+                        
+                        st.metric(label="Top Class Misconception", value=most_common_error, delta=f"{percentage}% of mistakes")
+                        
+                        if most_common_error == "Sign Error":
+                            st.warning("Students are commonly mismanaging negative integers when shifting expressions across `=` signs.")
+                            st.info("**Suggested Intervention:** Run a 5-minute warm-up lesson focused strictly on performing matching inverse operations simultaneously to both sides.")
+                        elif most_common_error == "Distribution Error":
+                            st.warning("Students are dropping coefficients outside of group parentheses items.")
+                            st.info("**Suggested Intervention:** Demonstrate the 'rainbow multiplication arrow method' on the whiteboard before next assignments.")
+                        elif most_common_error == "Variable Mismatch":
+                            st.warning("Students are accidentally misplacing or changing variables mid-equation.")
+                            st.info("**Suggested Intervention:** Advise students to carefully utilize the handwriting validation text area tool inside V.I.C.T.O.R before submitting.")
                         else:
-                            for item in reversed(s_history):
-                                col1, col2 = st.columns([1, 5])
-                                with col1:
-                                    if item['status'] == "Passed":
-                                        st.success("PASSED")
-                                    else:
-                                        st.error("ERROR")
-                                with col2:
-                                    st.markdown(f"**Date:** {item['date']}")
-                                    st.caption(f"**Steps Detected:** {item['equation']}")
-                                    st.markdown(f"*{item['message']}*")
-                                st.markdown("---")
+                            st.info("General arithmetic and evaluation errors are standard. Keep tracking step progression trends over the coming assignments.")
+
+            with tab_roster:
+                st.subheader("Student Roster & Activity Feed")
+                if not student_accounts:
+                    st.caption("No students have entered this classroom code yet.")
+                else:
+                    for s_user, s_data in student_accounts.items():
+                        s_history = s_data.get('history', [])
+                        with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history)} submissions"):
+                            if not s_history:
+                                st.caption("This student hasn't checked any equations yet.")
+                            else:
+                                for item in reversed(s_history):
+                                    col1, col2 = st.columns([1, 5])
+                                    with col1:
+                                        if item['status'] == "Passed":
+                                            st.success("PASSED")
+                                        else:
+                                            st.error("ERROR")
+                                    with col2:
+                                        st.markdown(f"**Date:** {item['date']}")
+                                        st.caption(f"**Steps Detected:** {item['equation']}")
+                                        st.markdown(f"*{item['message']}*")
+                                    st.markdown("---")
 
     else:
         tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
@@ -191,6 +279,18 @@ if auth_status:
                                 status_str = "Failed"
                                 st.error(f"Error found: {result.message}")
 
+                            msg_lower = result.message.lower()
+                            if "sign" in msg_lower:
+                                error_type_str = "Sign Error"
+                            elif "distrib" in msg_lower:
+                                error_type_str = "Distribution Error"
+                            elif "arithmetic" in msg_lower or "calculat" in msg_lower:
+                                error_type_str = "Arithmetic Error"
+                            elif "variable" in msg_lower or "drop" in msg_lower:
+                                error_type_str = "Variable Mismatch"
+                            else:
+                                error_type_str = "Conceptual/Other"
+
                             if 'history' not in config['credentials']['usernames'][username]:
                                 config['credentials']['usernames'][username]['history'] = []
 
@@ -201,8 +301,9 @@ if auth_status:
                                 'date': timestamp,
                                 'equation': " ➔ ".join(steps),
                                 'status': status_str,
-                                'message': result.message
-                            })
+                                'message': result.message,
+                                "error_type": error_type_str
+                                })
 
                             with open('config.yaml', 'w') as file:
                                 yaml.dump(config, file, default_flow_style=False)

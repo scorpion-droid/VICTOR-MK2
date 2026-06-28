@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from sympy import Abs, E, pi, simplify, sqrt
 from sympy.parsing.sympy_parser import (
     convert_xor,
@@ -18,6 +20,15 @@ LOCAL_DICT = {
     "E": E,
     "pi": pi,
     "sqrt": sqrt,
+    "cm": 1,
+    "mm": 1,
+    "km": 1,
+    "ft": 1,
+    "inch": 1,
+    "yd": 1,
+    "mi": 1,
+    "L": 1,
+    "ml": 1,
 }
 
 
@@ -33,8 +44,14 @@ def equation_splitter(step: str):
 
 def clean_expression(expr: str) -> str:
     expr = expr.replace(" ", "").strip()
-    expr = expr.replace("×", "*").replace("÷", "/")
+    expr = expr.replace("π", "pi").replace("Π", "pi")
+    expr = expr.replace("×", "*").replace("⋅", "*").replace("·", "*").replace("÷", "/")
     expr = expr.replace("−", "-").replace("—", "-").replace("–", "-")
+    expr = expr.replace("√", "sqrt")
+    expr = expr.replace("²", "**2").replace("³", "**3")
+    expr = re.sub(r"pi(?=[A-Za-z0-9(])", "pi*", expr)
+    expr = re.sub(r"pi(?=(?:cm|mm|km|ft|in|yd|mi|L|ml))", "pi*", expr)
+    expr = re.sub(r"(?<![A-Za-z])in(?![A-Za-z])", "inch", expr)
     return expr
 
 

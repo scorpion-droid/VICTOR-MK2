@@ -21,59 +21,117 @@ credentials:
         equation: "43 + 88 \u2794 131"
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 00-11
-        equation: "x + y = 5 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1) = 5 \u2794\
-          \ 2x = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: 'Step 1 could not be read: invalid syntax (<string>, line 1)'
-        status: Failed
-      - date: 2026-06-28 00-11
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-22
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-26
-        equation: "x + y = 5 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1) = 5 \u2794\
-          \ 2x . = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: 'Step 1 could not be read: invalid syntax (<string>, line 1)'
-        status: Failed
-      - date: 2026-06-28 00-26
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x . = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-27
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-34
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-34
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-34
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 00-34
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
-        message: Step 2 looks wrong.
-        status: Failed
       - date: 2026-06-28 00-38
         equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
           \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
+        message: No obvious errors detected.
+        status: Passed
+      - date: 2026-06-28 14-04
+        equation: "V = 4/3 \u03C0 r^3 ( \u2794 r = 3) \u2794 V = 4/3 \u03C0 (3)^3\
+          \ \u2794 V = 36\u03C0"
+        message: Step 3 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-06
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794 V\
+          \ = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-25
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-30
+        equation: "V = 4/3 \u03C0 r^3 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794 V\
+          \ = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-30
+        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-30
+        equation: "V = 4/3\u03C0r\xB3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-30
+        equation: "V = 4/3\u03C0r\xB3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: Step 2 looks wrong.
+        status: Failed
+      - date: 2026-06-28 14-53
+        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: No obvious errors detected.
+        status: Passed
+      - date: 2026-06-28 15-06
+        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
+        message: No obvious errors detected.
+        status: Passed
+      - date: 2026-06-28 15-08
+        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 9\u03C0"
+        message: 'Error on Step 3: It appears you''ve correctly identified a key value
+          as `3` in Step A. However, in Step B, it looks like you may have used the
+          diameter instead of the radius in the volume formula. Remember to always
+          use the radius (half of the diameter) when calculating the volume of a sphere.'
+        status: Failed
+      - date: 2026-06-28 15-12
+        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 9\u03C0"
+        message: "Error on Step 3: You've correctly identified the value of the radius,\
+          \ `r=3`, which is an excellent start! Your error lies in **Formula Misapplication**.\n\
+          \nIt appears you've used the formula for the volume of a sphere, `V = 4/3\
+          \ \u03C0 r^3`. Double-check the problem statement to ensure you are applying\
+          \ the correct formula for the specific geometric shape or quantity you're\
+          \ asked to calculate."
+        status: Failed
+      - date: 2026-06-28 15-14
+        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
+          \ V = 36\u03C0"
         message: No obvious errors detected.
         status: Passed
       last_name: Stormblessed
@@ -84,6 +142,7 @@ credentials:
       roles: null
     rexfrost:
       classes:
+        08ku3u: Math AA HL Block B
         hk6ugw: Math AA HL Block G
       email: r@polemarch.net
       first_name: Ronit
