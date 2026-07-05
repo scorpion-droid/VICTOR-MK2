@@ -30,7 +30,7 @@ Do not include any conversational text or markdown code fences."""
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.1-flash-lite",
             contents=[img, prompt],
             config=types.GenerateContentConfig(
                 temperature=0.0,
