@@ -46,6 +46,22 @@ def load_history_df():
     except Exception:
         return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
 
+def normalize_auth_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+
+    normalized = df.copy()
+    for col in normalized.columns:
+        if normalized[col].dtype == "object":
+            normalized[col] = normalized[col].fillna("").astype(str).str.strip()
+
+    if "username" in normalized.columns:
+        normalized["username"] = normalized["username"].str.lower()
+    if "class_code" in normalized.columns:
+        normalized["class_code"] = normalized["class_code"].str.lower()
+
+    return normalized
+
 # Bulletproof direct cell-matrix overwriter for saving modifications
 def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
     if not gc or not SPREADSHEET_ID:
@@ -84,7 +100,14 @@ HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
 
+    source_df = normalize_auth_df(source_df)
+
     for _, row in source_df.dropna(subset=["username"]).iterrows():
+        username = str(row["username"]).strip().lower()
+        password = str(row.get("password", "")).strip()
+        if not username or not password:
+            continue
+
         classes_dict = {}
         if pd.notna(row.get("classes")) and str(row["classes"]).strip():
             try:
@@ -92,13 +115,12 @@ def build_credentials(source_df: pd.DataFrame) -> dict:
             except Exception:
                 classes_dict = {}
 
-        username = str(row["username"]).strip().lower()
         credentials["usernames"][username] = {
-            "password": str(row["password"]),
-            "first_name": str(row["first_name"]) if pd.notna(row["first_name"]) else "",
-            "last_name": str(row["last_name"]) if pd.notna(row["last_name"]) else "",
-            "email": str(row["email"]) if pd.notna(row["email"]) else "",
-            "role": str(row["role"]) if pd.notna(row["role"]) else "student",
+            "password": password,
+            "first_name": str(row["first_name"]).strip() if pd.notna(row["first_name"]) else "",
+            "last_name": str(row["last_name"]).strip() if pd.notna(row["last_name"]) else "",
+            "email": str(row["email"]).strip() if pd.notna(row["email"]) else "",
+            "role": str(row["role"]).strip() if pd.notna(row["role"]) else "student",
             "class_code": str(row["class_code"]).strip().lower() if pd.notna(row["class_code"]) else "unassigned",
             "classes": classes_dict
         }
@@ -135,18 +157,36 @@ def render_login() -> None:
     global authenticator, credentials
     credentials = build_credentials(load_users_df())
     authenticator.authentication_controller.authentication_model.credentials = credentials
-    try:
-        authenticator.login(location="main", key="victor_main_login")
-    except Exception as exc:
-        message = str(exc)
-        if "User not authorized" in message:
-            authenticator.cookie_controller.delete_cookie()
-            for key in ("authentication_status", "name", "username", "logout"):
-                st.session_state.pop(key, None)
-            st.warning("Your saved login session was stale. Resetting environment...")
-            st.rerun()
-        else:
-            raise
+
+    with st.form("victor_login_form", clear_on_submit=False):
+        st.subheader("Login")
+        login_username = st.text_input("Username", autocomplete="off")
+        login_password = st.text_input("Password", type="password", autocomplete="off")
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
+        normalized_username = login_username.strip().lower()
+        if not normalized_username or not login_password:
+            st.error("Please enter both a username and password.")
+            return
+
+        try:
+            if authenticator.authentication_controller.login(normalized_username, login_password):
+                authenticator.cookie_controller.set_cookie()
+                st.rerun()
+            else:
+                st.session_state["authentication_status"] = False
+                st.error("Username/password is incorrect")
+        except Exception as exc:
+            message = str(exc)
+            if "User not authorized" in message:
+                authenticator.cookie_controller.delete_cookie()
+                for key in ("authentication_status", "name", "username", "logout"):
+                    st.session_state.pop(key, None)
+                st.warning("Your saved login session was stale. Resetting environment...")
+                st.rerun()
+            else:
+                raise
 
 auth_status = st.session_state.get("authentication_status")
 
