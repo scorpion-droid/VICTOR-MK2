@@ -4,6 +4,7 @@ import random
 import string
 import datetime
 import html
+import textwrap
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -197,10 +198,12 @@ def render_history_card(date_text: str, steps_text: str, message_text: str, pass
     status_label = "PASSED" if passed else "ERROR"
     status_bg = "#163d2e" if passed else "#4b2730"
     status_fg = "#5ee38a" if passed else "#ff7373"
-    header_html = f"<div style='font-size:0.95rem; color:#9ca3af; margin-bottom:0.35rem;'>{html.escape(header_text)}</div>" if header_text else ""
+    header_html = (
+        f"<div style='font-size:0.95rem; color:#9ca3af; margin-bottom:0.35rem;'>{html.escape(header_text)}</div>"
+        if header_text else ""
+    )
 
-    st.markdown(
-        f"""
+    card_html = textwrap.dedent(f"""
         <div style="
             border: 1px solid rgba(255,255,255,0.10);
             border-radius: 18px;
@@ -223,16 +226,16 @@ def render_history_card(date_text: str, steps_text: str, message_text: str, pass
                 ">{status_label}</div>
                 <div style="color:#e5e7eb; font-size:1.15rem; font-weight:700;">Date: {html.escape(date_text)}</div>
             </div>
-            <div style="margin-top:0.9rem; color:#d1d5db; font-size:1.3rem; line-height:1.7; font-weight:600; word-break:break-word;">
+            <div style="margin-top:0.9rem; color:#d1d5db; font-size:1.3rem; line-height:1.7; font-weight:600; word-break:break-word; white-space:pre-wrap;">
                 {html.escape(steps_text)}
             </div>
-            <div style="margin-top:0.85rem; color:#cbd5e1; font-size:1.02rem; line-height:1.7;">
-                {html.escape(message_text)}
+            <div style="margin-top:0.85rem; color:#cbd5e1; font-size:1.02rem; line-height:1.7; white-space:pre-wrap;">
+                {html.escape(message_text).replace('**', '')}
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """).strip()
+
+    st.markdown(card_html, unsafe_allow_html=True)
 
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
