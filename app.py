@@ -181,25 +181,6 @@ def render_login() -> None:
     credentials = build_credentials(load_users_df())
     authenticator.authentication_controller.authentication_model.credentials = credentials
 
-    debug_users = load_users_df()
-    st.write("DEBUG columns:", list(debug_users.columns))
-    st.write("DEBUG usernames in sheet:", debug_users["username"].astype(str).str.strip().str.lower().tolist())
-
-    target_user = "thequeenswit"
-    matched_row = debug_users[
-        debug_users["username"].astype(str).str.strip().str.lower() == target_user
-    ]
-
-    st.write("DEBUG matched row for thequeenswit:")
-    st.dataframe(matched_row)
-
-    if not matched_row.empty:
-        row = matched_row.iloc[0]
-        st.write("DEBUG password column value:")
-        st.code(str(row.get("password", "")))
-        st.write("DEBUG password hint:")
-        st.code(str(row.get("password_hint", "")))
-
     with st.form("victor_login_form", clear_on_submit=False):
         st.subheader("Login")
         login_username = st.text_input("Username", autocomplete="off")
