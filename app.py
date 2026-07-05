@@ -380,12 +380,8 @@ elif auth_status is None or auth_status == "":
             email_of_user, username, name = authenticator.register_user(location="main")
             if username:
                 users_df = load_users_df()
-                plain_password = st.session_state.get("victor_main_login", {}).get("password", st.session_state.get("password", ""))
-                hashed_pw = stauth.Hasher([plain_password]).generate()[0] if plain_password else ""
+                hashed_pw = authenticator.authentication_controller.authentication_model.credentials["usernames"][username]["password"]
                 
-                if not hashed_pw and username in credentials.get("usernames", {}):
-                    hashed_pw = credentials["usernames"][username].get("password", "")
-
                 new_user_row = pd.DataFrame([{
                     "username": username, "password": hashed_pw, "first_name": name, "last_name": "", "email": email_of_user,
                     "role": 'student' if signup_role == "Student" else 'teacher',
