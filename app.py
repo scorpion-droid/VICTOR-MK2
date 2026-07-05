@@ -73,27 +73,33 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
 USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"]
 HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
 
+def build_credentials(source_df: pd.DataFrame) -> dict:
+    credentials = {"usernames": {}}
+
+    for _, row in source_df.dropna(subset=["username"]).iterrows():
+        classes_dict = {}
+        if pd.notna(row.get("classes")) and str(row["classes"]).strip():
+            try:
+                classes_dict = json.loads(str(row["classes"]))
+            except Exception:
+                classes_dict = {}
+
+        username = str(row["username"]).strip().lower()
+        credentials["usernames"][username] = {
+            "password": str(row["password"]),
+            "first_name": str(row["first_name"]) if pd.notna(row["first_name"]) else "",
+            "last_name": str(row["last_name"]) if pd.notna(row["last_name"]) else "",
+            "email": str(row["email"]) if pd.notna(row["email"]) else "",
+            "role": str(row["role"]) if pd.notna(row["role"]) else "student",
+            "class_code": str(row["class_code"]).strip().lower() if pd.notna(row["class_code"]) else "unassigned",
+            "classes": classes_dict
+        }
+
+    return credentials
+
 # Extract and map active system accounts
 users_df = load_users_df()
-credentials = {"usernames": {}}
-
-for _, row in users_df.dropna(subset=["username"]).iterrows():
-    classes_dict = {}
-    if pd.notna(row.get("classes")) and str(row["classes"]).strip():
-        try:
-            classes_dict = json.loads(str(row["classes"]))
-        except Exception:
-            classes_dict = {}
-
-    credentials["usernames"][str(row["username"])] = {
-        "password": str(row["password"]),
-        "first_name": str(row["first_name"]) if pd.notna(row["first_name"]) else "",
-        "last_name": str(row["last_name"]) if pd.notna(row["last_name"]) else "",
-        "email": str(row["email"]) if pd.notna(row["email"]) else "",
-        "role": str(row["role"]) if pd.notna(row["role"]) else "student",
-        "class_code": str(row["class_code"]).strip().lower() if pd.notna(row["class_code"]) else "unassigned",
-        "classes": classes_dict
-    }
+credentials = build_credentials(users_df)
 
 config_cookie = {
     'cookie': {
@@ -118,6 +124,14 @@ def generate_class_code():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
 
 def render_login() -> None:
+    global authenticator, credentials
+    credentials = build_credentials(load_users_df())
+    authenticator = stauth.Authenticate(
+        credentials,
+        config_cookie['cookie']['name'],
+        config_cookie['cookie']['key'],
+        config_cookie['cookie']['expiry_days']
+    )
     try:
         authenticator.login(location="main", key="victor_main_login")
     except Exception as exc:
@@ -392,6 +406,7 @@ elif auth_status is None or auth_status == "":
                 updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
                 if save_dataframe_to_worksheet("Users", updated_users, USER_COLS):
                     st.success("Account created successfully! Flip over to the 'Login' tab.")
+                    st.rerun()
                 else:
                     st.warning("Account details were filled in, but the save failed. Check your Google Sheets credentials and spreadsheet setup.")
         except Exception as e:
