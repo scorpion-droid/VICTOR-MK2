@@ -399,14 +399,17 @@ elif auth_status is None or auth_status == "":
 
             if username:
                 users_df = load_users_df()
-              
-                hashed_pw = authenticator.credentials["usernames"][username]["password"]
+
+                hashed_pw = authenticator.authentication_controller.authentication_model.credentials["usernames"][username]["password"]
+                name_parts = [part for part in str(name).split(" ") if part]
+                first_name = name_parts[0] if name_parts else ""
+                last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
                 
                 new_user_row = pd.DataFrame([{
                     "username": username,
                     "password": hashed_pw,
-                    "first_name": name,
-                    "last_name": "",
+                    "first_name": first_name,
+                    "last_name": last_name,
                     "email": email_of_user,
                     "role": 'student' if signup_role == "Student" else 'teacher',
                     "class_code": student_class_code.strip().lower() if signup_role == "Student" else "unassigned",
