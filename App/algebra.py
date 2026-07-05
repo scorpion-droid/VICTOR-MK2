@@ -90,11 +90,15 @@ def _normalize_inequality(left, operator: str, right):
 
     try:
         free_symbols = sorted(diff.free_symbols, key=lambda symbol: symbol.name)
-        poly = Poly(diff, *free_symbols) if free_symbols else Poly(diff)
-        lead_coeff = poly.LC()
-        if getattr(lead_coeff, "is_number", False):
-            if lead_coeff.is_negative:
-                operator = _flip_relation(operator)
+        if free_symbols:
+            lead_coeff = diff.coeff(free_symbols[0], 1)
+
+            if lead_coeff and getattr(lead_coeff, "is_number", False) and lead_coeff != 0:
+                if lead_coeff.is_negative:
+                    operator = _flip_relation(operator)
+                
+                diff = simplify(diff / lead_coeff)
+                diff = _canonicalize_expression(diff)
     except Exception:
         pass
 
