@@ -8,6 +8,7 @@ import pillow_heif
 import pandas as pd
 import gspread
 import streamlit_authenticator as stauth
+from streamlit_authenticator.utilities import Hasher
 from streamlit_gsheets import GSheetsConnection
 from App.sanitiser import clean_image
 from App.checker import detect_first_error
@@ -36,12 +37,22 @@ gc, SPREADSHEET_ID = get_gspread_client()
 # Safe database readers using the public connection manager
 def load_users_df():
     try:
+        if gc and SPREADSHEET_ID:
+            sh = gc.open_by_key(SPREADSHEET_ID)
+            worksheet = sh.worksheet("Users")
+            records = worksheet.get_all_records()
+            return pd.DataFrame(records) if records else pd.DataFrame(columns=USER_COLS)
         return conn.read(worksheet="Users", ttl=0)
     except Exception:
-        return pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"])
+        return pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"])
 
 def load_history_df():
     try:
+        if gc and SPREADSHEET_ID:
+            sh = gc.open_by_key(SPREADSHEET_ID)
+            worksheet = sh.worksheet("History")
+            records = worksheet.get_all_records()
+            return pd.DataFrame(records) if records else pd.DataFrame(columns=HISTORY_COLS)
         return conn.read(worksheet="History", ttl=0)
     except Exception:
         return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
@@ -94,7 +105,7 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
         st.error(f"Failed writing data to sheet tab '{worksheet_name}': {e}")
         return False
 
-USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"]
+USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"]
 HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
 
 def build_credentials(source_df: pd.DataFrame) -> dict:
@@ -122,6 +133,7 @@ def build_credentials(source_df: pd.DataFrame) -> dict:
             "email": str(row["email"]).strip() if pd.notna(row["email"]) else "",
             "role": str(row["role"]).strip() if pd.notna(row["role"]) else "student",
             "class_code": str(row["class_code"]).strip().lower() if pd.notna(row["class_code"]) else "unassigned",
+            "password_hint": str(row["password_hint"]).strip() if pd.notna(row.get("password_hint")) else "",
             "classes": classes_dict
         }
 
@@ -150,6 +162,17 @@ st.session_state.setdefault("ocr_ready", False)
 st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("authentication_status", None)
 
+cookie_token = authenticator.cookie_controller.get_cookie()
+if cookie_token and not st.session_state.get("authentication_status"):
+    cookie_username = str(cookie_token.get("username", "")).strip().lower()
+    if cookie_username in credentials["usernames"]:
+        cookie_profile = credentials["usernames"][cookie_username]
+        st.session_state["authentication_status"] = True
+        st.session_state["username"] = cookie_username
+        st.session_state["name"] = f"{cookie_profile.get('first_name', '')} {cookie_profile.get('last_name', '')}".strip()
+        st.session_state["email"] = cookie_profile.get("email")
+        st.session_state["roles"] = cookie_profile.get("role")
+
 def generate_class_code():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
 
@@ -171,7 +194,18 @@ def render_login() -> None:
             return
 
         try:
-            if authenticator.authentication_controller.login(normalized_username, login_password):
+            user_record = credentials["usernames"].get(normalized_username)
+            if not user_record:
+                st.session_state["authentication_status"] = False
+                st.error("Username/password is incorrect")
+                return
+
+            if Hasher.check_pw(login_password, user_record["password"]):
+                st.session_state["authentication_status"] = True
+                st.session_state["username"] = normalized_username
+                st.session_state["name"] = f"{user_record.get('first_name', '')} {user_record.get('last_name', '')}".strip()
+                st.session_state["email"] = user_record.get("email")
+                st.session_state["roles"] = user_record.get("role")
                 authenticator.cookie_controller.set_cookie()
                 st.rerun()
             else:
@@ -438,12 +472,14 @@ elif auth_status is None or auth_status == "":
             if username:
                 users_df = load_users_df()
                 hashed_pw = authenticator.authentication_controller.authentication_model.credentials["usernames"][username]["password"]
+                password_hint = authenticator.authentication_controller.authentication_model.credentials["usernames"][username].get("password_hint", "")
                 
                 new_user_row = pd.DataFrame([{
                     "username": username, "password": hashed_pw, "first_name": name, "last_name": "", "email": email_of_user,
                     "role": 'student' if signup_role == "Student" else 'teacher',
                     "class_code": student_class_code.strip().lower() if signup_role == "Student" else "unassigned",
-                    "classes": json.dumps({}) if signup_role == "Teacher" else ""
+                    "classes": json.dumps({}) if signup_role == "Teacher" else "",
+                    "password_hint": password_hint
                 }])
                 
                 updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
