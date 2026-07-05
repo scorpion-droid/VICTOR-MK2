@@ -6,3 +6,4 @@ pillow
 streamlit-authenticator
 pyyaml
 sympy
+pillow_heif
