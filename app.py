@@ -5,9 +5,21 @@ import streamlit_authenticator as stauth
 from PIL import Image
 import pillow_heif
 import random
+import os
 import string
 from App.sanitiser import clean_image
 from App.checker import detect_first_error
+
+if os.path.exists("/data"):
+    DATA_PATH = "/data/config.yaml"
+else:
+    DATA_PATH = "config.yaml"  
+
+try:
+    with open(DATA_PATH, "r") as file:
+        config = yaml.safe_load(file)
+except FileNotFoundError:
+    config = {"credentials": {"usernames": {}}}
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
