@@ -126,12 +126,7 @@ def generate_class_code():
 def render_login() -> None:
     global authenticator, credentials
     credentials = build_credentials(load_users_df())
-    authenticator = stauth.Authenticate(
-        credentials,
-        config_cookie['cookie']['name'],
-        config_cookie['cookie']['key'],
-        config_cookie['cookie']['expiry_days']
-    )
+    authenticator.authentication_controller.authentication_model.credentials = credentials
     try:
         authenticator.login(location="main", key="victor_main_login")
     except Exception as exc:
