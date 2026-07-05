@@ -3,8 +3,6 @@ import json
 import random
 import string
 import datetime
-import html
-import textwrap
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -195,47 +193,21 @@ def render_analytics_panel(title: str, history_df: pd.DataFrame, empty_message: 
         st.metric(label="Top Error Type", value=most_common_error, delta=f"{percentage}% of mistakes")
 
 def render_history_card(date_text: str, steps_text: str, message_text: str, passed: bool, header_text: str | None = None) -> None:
-    status_label = "PASSED" if passed else "ERROR"
-    status_bg = "#163d2e" if passed else "#4b2730"
-    status_fg = "#5ee38a" if passed else "#ff7373"
-    header_html = (
-        f"<div style='font-size:0.95rem; color:#9ca3af; margin-bottom:0.35rem;'>{html.escape(header_text)}</div>"
-        if header_text else ""
-    )
-
-    card_html = textwrap.dedent(f"""
-        <div style="
-            border: 1px solid rgba(255,255,255,0.10);
-            border-radius: 18px;
-            padding: 1rem 1.1rem;
-            margin-bottom: 1rem;
-            background: rgba(255,255,255,0.03);
-        ">
-            {header_html}
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap;">
-                <div style="
-                    background:{status_bg};
-                    color:{status_fg};
-                    border-radius:14px;
-                    padding:0.55rem 0.9rem;
-                    font-size:0.95rem;
-                    font-weight:700;
-                    letter-spacing:0.04em;
-                    min-width:92px;
-                    text-align:center;
-                ">{status_label}</div>
-                <div style="color:#e5e7eb; font-size:1.15rem; font-weight:700;">Date: {html.escape(date_text)}</div>
-            </div>
-            <div style="margin-top:0.9rem; color:#d1d5db; font-size:1.3rem; line-height:1.7; font-weight:600; word-break:break-word; white-space:pre-wrap;">
-                {html.escape(steps_text)}
-            </div>
-            <div style="margin-top:0.85rem; color:#cbd5e1; font-size:1.02rem; line-height:1.7; white-space:pre-wrap;">
-                {html.escape(message_text).replace('**', '')}
-            </div>
-        </div>
-    """).strip()
-
-    st.markdown(card_html, unsafe_allow_html=True)
+    with st.container(border=True):
+        top_left, top_right = st.columns([1, 3])
+        with top_left:
+            if passed:
+                st.success("PASSED")
+            else:
+                st.error("ERROR")
+        with top_right:
+            if header_text:
+                st.caption(header_text)
+            st.markdown(f"**Date:** {date_text}")
+            st.markdown(f"**Steps Detected:**")
+            st.subheader(steps_text)
+            st.markdown(f"**Feedback:**")
+            st.write(message_text)
 
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
