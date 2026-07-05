@@ -13,25 +13,27 @@ from App.checker import detect_first_error
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
+# 1. Establish Secure Cloud Connection to Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Helper functions reading from the configuration-bound connection tabs
 def load_users_df():
     try:
-        return conn.read(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", ttl=0)
+        return conn.read(worksheet="Users", ttl=0)
     except Exception:
         return pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"])
 
 def load_history_df():
     try:
-        return conn.read(spreadsheet=st.secrets["GSHEET_URL"], worksheet="History", ttl=0)
+        return conn.read(worksheet="History", ttl=0)
     except Exception:
         return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
 
+# 2. Extract credentials to feed the Authenticator
 users_df = load_users_df()
 credentials = {"usernames": {}}
 
 for _, row in users_df.dropna(subset=["username"]).iterrows():
-
     classes_dict = {}
     if pd.notna(row.get("classes")) and str(row["classes"]).strip():
         try:
@@ -106,11 +108,11 @@ if auth_status:
             if st.button("Generate Class"):
                 if new_class_name.strip():
                     new_code = generate_class_code()
-        
+                    
                     teacher_classes[new_code] = new_class_name.strip()
                     users_df = load_users_df()
                     users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                    conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=users_df)
+                    conn.update(worksheet="Users", data=users_df)
                     
                     st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
                     st.rerun()
@@ -135,11 +137,10 @@ if auth_status:
                     if confirm_delete:
                         deleted_class_name = teacher_classes[class_to_delete_code]
                         
-                        # Remove class and rewrite tracking dataframe to Google Sheet
                         teacher_classes.pop(class_to_delete_code, None)
                         users_df = load_users_df()
                         users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                        conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=users_df)
+                        conn.update(worksheet="Users", data=users_df)
 
                         st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
                         st.rerun()
@@ -159,7 +160,7 @@ if auth_status:
         else:
             class_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
             selected_code = st.selectbox("Select Classroom Section:", options=list(class_options.keys()), format_func=lambda x: class_options[x])
-         
+            
             student_accounts = {
                 u: data for u, data in credentials["usernames"].items() 
                 if data.get('role') == 'student' and data.get('class_code') == selected_code
@@ -327,7 +328,6 @@ if auth_status:
                             else:
                                 error_type_str = "Conceptual/Other"
 
-                            # Append math resolution to flat History spreadsheet tab
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                             history_df = load_history_df()
                             
@@ -341,7 +341,7 @@ if auth_status:
                             }])
 
                             updated_history = pd.concat([history_df, new_log], ignore_index=True)
-                            conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="History", data=updated_history)
+                            conn.update(worksheet="History", data=updated_history)
 
         with tab2:
             st.title("Your Performance History")
@@ -399,17 +399,14 @@ elif auth_status is None or auth_status == "":
 
             if username:
                 users_df = load_users_df()
-
-                hashed_pw = authenticator.authentication_controller.authentication_model.credentials["usernames"][username]["password"]
-                name_parts = [part for part in str(name).split(" ") if part]
-                first_name = name_parts[0] if name_parts else ""
-                last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+                
+                hashed_pw = credentials["usernames"][username]["password"]
                 
                 new_user_row = pd.DataFrame([{
                     "username": username,
                     "password": hashed_pw,
-                    "first_name": first_name,
-                    "last_name": last_name,
+                    "first_name": name,
+                    "last_name": "",
                     "email": email_of_user,
                     "role": 'student' if signup_role == "Student" else 'teacher',
                     "class_code": student_class_code.strip().lower() if signup_role == "Student" else "unassigned",
@@ -417,12 +414,12 @@ elif auth_status is None or auth_status == "":
                 }])
                 
                 updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
-                conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=updated_users)
+                conn.update(worksheet="Users", data=updated_users)
 
                 if signup_role == "Student":
                     st.success(f"Account created! You have successfully joined classroom code `{student_class_code.strip().lower()}`. Click the 'Login' tab to access V.I.C.T.O.R.")
                 else:
-                    st.success("Teacher profile registered! Flip over to the 'Login' tab to launch your administrative hub.")
+                    st.success("Teacher profile registered perfectly! Flip over to the 'Login' tab to launch your administrative hub.")
 
         except Exception as e:
             st.error(e)
