@@ -50,7 +50,7 @@ def load_history_df():
 def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
     if not gc or not SPREADSHEET_ID:
         st.error("Database initialization failed. Cannot save.")
-        return
+        return False
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
         worksheet = sh.worksheet(worksheet_name)
@@ -65,8 +65,10 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
         
         worksheet.clear()
         worksheet.update(data_matrix)
+        return True
     except Exception as e:
         st.error(f"Failed writing data to sheet tab '{worksheet_name}': {e}")
+        return False
 
 USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"]
 HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
@@ -392,7 +394,9 @@ elif auth_status is None or auth_status == "":
                 }])
                 
                 updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
-                save_dataframe_to_worksheet("Users", updated_users, USER_COLS)
-                st.success("Account created successfully! Flip over to the 'Login' tab.")
+                if save_dataframe_to_worksheet("Users", updated_users, USER_COLS):
+                    st.success("Account created successfully! Flip over to the 'Login' tab.")
+                else:
+                    st.warning("Account details were filled in, but the save failed. Check your Google Sheets credentials and spreadsheet setup.")
         except Exception as e:
             st.error(e)
