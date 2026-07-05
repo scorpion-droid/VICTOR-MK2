@@ -9,129 +9,122 @@ credentials:
       email: mrstormblessed@urithiru.alethkar
       first_name: Kal
       history:
-      - date: 2026-06-28 00-04
-        equation: "43 + 88 = 131 \u2794 131 = 131"
+      - date: 2026-06-28 16-33
+        equation: "4x + 7 = 19 \u2794 4x = 12 \u2794 x = 3"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 00-04
-        equation: "43 + 88 \u2794 131"
+      - date: 2026-06-28 16-33
+        equation: "3y - 5 = 10 \u2794 3y = 5 \u2794 y = 5/3"
+        error_type: Arithmetic Error
+        message: 'Error on Step 2: It looks like you made an **Arithmetic Mistake**
+          when balancing the equation. Remember, to undo subtracting 5 on the left
+          side, you need to *add* 5 to *both* sides of the equation, so be sure to
+          add 5 to the 10 on the right side as well!'
+        status: Failed
+      - date: 2026-06-28 16-33
+        equation: "2 (x + 4) = 16 \u2794 2x + 8 = 16 \u2794 2x = 8 \u2794 x = 4"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 00-04
-        equation: "43 + 88 \u2794 131"
+      - date: 2026-06-28 16-34
+        equation: "5(2m-1) = 2-m \u2794 10m - 1 = 2-m \u2794 10m +m = 2+1 \u2794 11m\
+          \ = 3 \u2794 m = 11/3"
+        error_type: Distribution Error
+        message: 'Error on Step 2: You''re off to a fantastic start with your distribution!
+          Remember that the 5 needs to multiply *both* terms inside the parentheses,
+          so be sure to also multiply the 5 by the -1.'
+        status: Failed
+      - date: 2026-06-28 16-34
+        equation: "3(x-2) +2x = 4x+1 \u2794 3x-6 +2x = 4x+1 \u2794 5x-6 = 4x+1 \u2794\
+          \ x = 7"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 00-38
-        equation: "x + y = 5 \u2794 x - y = 1 \u2794 y = x - 1 \u2794 x + (x - 1)\
-          \ = 5 \u2794 2x  = 6 \u2794 x = 3 \u2794 y = (3) - 1 \u2794 y = 2"
+      - date: 2026-06-28 16-35
+        equation: "(2x - 1)/6 = 4 \u2794 2x - 1 = 24 \u2794 2x = 25 \u2794 x = 25/2"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 14-04
-        equation: "V = 4/3 \u03C0 r^3 ( \u2794 r = 3) \u2794 V = 4/3 \u03C0 (3)^3\
-          \ \u2794 V = 36\u03C0"
-        message: Step 3 looks wrong.
+      - date: 2026-06-28 16-35
+        equation: "0.02m + 0.08(8-m) = 1.78 \u2794 0.02m + 0.64 - 0.08m = 1.78 \u2794\
+          \ -0.06m = 1.14 \u2794 m = 19"
+        error_type: Sign Error
+        message: 'Error on Step 1: Algebra step validation failed. Check your signs,
+          distribution, or basic calculations.'
         status: Failed
-      - date: 2026-06-28 14-06
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
+      - date: 2026-06-28 18-06
+        equation: "15 n + 5 \u2794 = 5 ( 3 n + 1 )"
+        error_type: Sign Error
+        message: 'Error on Step 2: Algebra step validation failed. Check your signs,
+          distribution, or basic calculations.'
         status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794 V\
-          \ = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-25
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-30
-        equation: "V = 4/3 \u03C0 r^3 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794 V\
-          \ = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-30
-        equation: "V = 4/3 \u03C0 r^3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-30
-        equation: "V = 4/3\u03C0r\xB3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-30
-        equation: "V = 4/3\u03C0r\xB3 \u2794 (r = 3) \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: Step 2 looks wrong.
-        status: Failed
-      - date: 2026-06-28 14-53
-        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
+      - date: 2026-06-28 18-06
+        equation: "15 n + 5 \u2794 5 ( 3 n + 1 )"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
-      - date: 2026-06-28 15-06
-        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
-        message: No obvious errors detected.
-        status: Passed
-      - date: 2026-06-28 15-08
-        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 9\u03C0"
-        message: 'Error on Step 3: It appears you''ve correctly identified a key value
-          as `3` in Step A. However, in Step B, it looks like you may have used the
-          diameter instead of the radius in the volume formula. Remember to always
-          use the radius (half of the diameter) when calculating the volume of a sphere.'
+      - date: 2026-06-29 14-43
+        equation: "a^2 + ax + ab + bx \u2794 a^2 + ab + ax + bx \u2794 a (a+b) + x\
+          \ (a+b) \u2794 (a+b) (a-x)"
+        error_type: Conceptual/Other
+        message: 'Error on Step 4: You''re doing great with identifying the common
+          factor! Just double-check the operation between the terms left inside your
+          second set of parentheses; remember to keep the original addition from Step
+          A.'
         status: Failed
-      - date: 2026-06-28 15-12
-        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 9\u03C0"
-        message: "Error on Step 3: You've correctly identified the value of the radius,\
-          \ `r=3`, which is an excellent start! Your error lies in **Formula Misapplication**.\n\
-          \nIt appears you've used the formula for the volume of a sphere, `V = 4/3\
-          \ \u03C0 r^3`. Double-check the problem statement to ensure you are applying\
-          \ the correct formula for the specific geometric shape or quantity you're\
-          \ asked to calculate."
+      - date: 2026-06-29 18-44
+        equation: "12x + 32y \u2794 12 (x + 3y)"
+        error_type: Arithmetic Error
+        message: 'Error on Step 2: You''ve made an excellent attempt at factoring!
+          When you factored out 12, you correctly divided 12x by 12, but there was
+          a small arithmetic error when dividing 32y by 12. Make sure to divide each
+          term precisely by the number you are factoring out.'
         status: Failed
-      - date: 2026-06-28 15-14
-        equation: "V = 4/3 \u03C0 r^3 \u2794 r = 3 \u2794 V = 4/3 \u03C0 (3)^3 \u2794\
-          \ V = 36\u03C0"
+      - date: 2026-06-29 18-47
+        equation: "ab - 2b + a^2 - 2a \u2794 2 (a-b) + a (a-2) \u2794 (a-b) (2+a)\
+          \ (a-2)"
+        error_type: Distribution Error
+        message: 'Error on Step 2: You''re off to a good start by attempting to factor
+          by grouping and correctly factoring `a^2 - 2a`! However, you made a factoring
+          error with the first two terms, `ab - 2b`, by misidentifying the common
+          factor and incorrectly applying the distributive property in reverse. Remember
+          to carefully find the greatest common factor that is present in *both* terms
+          of the group and then correctly determine the remaining expression inside
+          the parentheses.'
+        status: Failed
+      - date: 2026-06-29 18-48
+        equation: "49m\xB2 - 1 \u2794 = (7m + 1)(7m + 1) \u2794 = (7m + 1)\xB2"
+        error_type: Sign Error
+        message: 'Error on Step 2: The student made a **factorization form error**.
+
+
+          Great start, you''ve got the correct terms for factoring! However, you used
+          the same sign in both factors, which would create an extra middle term like
+          $14m$ when multiplied out. Remember that a difference of squares needs factors
+          with opposite signs to cancel out that middle term.'
+        status: Failed
+      - date: 2026-06-29 18-49
+        equation: "49m\xB2 - 1 \u2794 (7m + 1)(7m + 1) \u2794 (7m + 1)\xB2"
+        error_type: Sign Error
+        message: 'Error on Step 2: You''re very close! While you correctly identified
+          $7m$ and $1$, your factored form $(7m+1)(7m+1)$ would expand to $49m^2 +
+          14m + 1$. Remember that for a difference of squares, the two binomial factors
+          must have opposite signs to eliminate the middle term.'
+        status: Failed
+      - date: 2026-06-29 18-50
+        equation: "5m^2 + 14m - 3 \u2794 5m^2 + (5m + m. -3) \u2794 5m (m + 3) + (m\
+          \ + 3) \u2794 (5m + 1) (m + 3)"
+        error_type: Conceptual/Other
+        message: 'Error on Step 2: Great start keeping your $5m^2$ term correct! When
+          splitting the middle term, remember that the terms you choose must add up
+          to exactly $14m$, and the constant term, $-3$, should typically remain separate
+          from this grouping at this stage.'
+        status: Failed
+      - date: 2026-06-29 18-51
+        equation: "5m^2 + 14m - 3 \u2794 5m^2 + 15m - m - 3 \u2794 5m (m + 3) - (m\
+          \ + 3) \u2794 (5m - 1) (m + 3)"
+        error_type: Conceptual/Other
         message: No obvious errors detected.
         status: Passed
       last_name: Stormblessed
