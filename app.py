@@ -108,6 +108,90 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
 USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"]
 HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
 
+ERROR_BUCKETS = [
+    "Sign Error",
+    "Distribution Error",
+    "Arithmetic Error",
+    "Variable Mismatch",
+    "Inequality Error",
+    "Exponent/Power Error",
+    "Radical Error",
+    "Geometry/Formula Error",
+    "Equation Setup Error",
+    "OCR/Formatting Error",
+    "Conceptual/Other",
+]
+
+def classify_error_type(message: str, steps: list[str]) -> str:
+    combined = f"{message} {' '.join(steps)}".lower()
+
+    if any(sym in combined for sym in ["<", ">", "≤", "≥", "less than", "greater than", "inequal"]):
+        return "Inequality Error"
+    if any(term in combined for term in ["sqrt", "square root", "radical", "root"]):
+        return "Radical Error"
+    if any(sym in combined for sym in ["^", "power", "exponent", "squared", "cubed"]):
+        return "Exponent/Power Error"
+    if any(term in combined for term in ["volume", "area", "radius", "circumference", "triangle", "rectangle", "sphere", "cylinder", "cone", "formula"]):
+        return "Geometry/Formula Error"
+    if any(term in combined for term in ["system of equations", "simultaneous", "substitution", "elimination"]):
+        return "Equation Setup Error"
+    if any(term in combined for term in ["ocr", "symbol", "spacing", "format", "handwriting"]):
+        return "OCR/Formatting Error"
+    if "sign" in combined:
+        return "Sign Error"
+    if "distrib" in combined:
+        return "Distribution Error"
+    if "arithmetic" in combined or "calculat" in combined:
+        return "Arithmetic Error"
+    if "variable" in combined or "drop" in combined:
+        return "Variable Mismatch"
+    return "Conceptual/Other"
+
+def summarize_history(history_df: pd.DataFrame) -> dict:
+    summary = {bucket: 0 for bucket in ERROR_BUCKETS}
+    if history_df.empty or "error_type" not in history_df.columns:
+        return summary
+
+    for value in history_df.loc[history_df["status"] == "Failed", "error_type"].fillna("Conceptual/Other"):
+        if value not in summary:
+            summary["Conceptual/Other"] += 1
+        else:
+            summary[value] += 1
+    return summary
+
+def render_analytics_panel(title: str, history_df: pd.DataFrame, empty_message: str) -> None:
+    st.subheader(title)
+    if history_df.empty:
+        st.info(empty_message)
+        return
+
+    total_scans = len(history_df)
+    passed_scans = int((history_df["status"] == "Passed").sum())
+    failed_scans = int((history_df["status"] == "Failed").sum())
+    pass_rate = f"{int((passed_scans / total_scans) * 100)}%" if total_scans else "N/A"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Total Checks", total_scans)
+    with c2:
+        st.metric("Pass Rate", pass_rate)
+    with c3:
+        st.metric("Failed Checks", failed_scans)
+
+    error_counts = summarize_history(history_df)
+    failed_total = sum(error_counts.values())
+    if failed_total == 0:
+        st.success("No failed checks yet. Nice work.")
+        return
+
+    col_chart, col_insights = st.columns([3, 2])
+    with col_chart:
+        st.bar_chart(error_counts)
+    with col_insights:
+        most_common_error = max(error_counts, key=error_counts.get)
+        percentage = int((error_counts[most_common_error] / failed_total) * 100) if failed_total > 0 else 0
+        st.metric(label="Top Error Type", value=most_common_error, delta=f"{percentage}% of mistakes")
+
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
 
@@ -320,25 +404,11 @@ if auth_status:
             tab_analytics, tab_roster = st.tabs(["Concept Analytics Insights", "Student Roster & Live Logs"])
             
             with tab_analytics:
-                st.subheader("Classroom Misconception Breakdown")
-                error_counts = {"Sign Error": 0, "Distribution Error": 0, "Arithmetic Error": 0, "Variable Mismatch": 0, "Conceptual/Other": 0}
-                
-                failed_scans = class_history_df[class_history_df["status"] == "Failed"]
-                for e_type in failed_scans["error_type"]:
-                    if e_type in error_counts:
-                        error_counts[e_type] += 1
-                
-                if len(failed_scans) == 0:
-                    st.success("Zero student errors recorded in this section yet! Everything balances perfectly.")
-                else:
-                    col_chart, col_insights = st.columns([3, 2])
-                    with col_chart:
-                        st.bar_chart(error_counts)
-                    with col_insights:
-                        total_errors = sum(error_counts.values())
-                        most_common_error = max(error_counts, key=error_counts.get)
-                        percentage = int((error_counts[most_common_error] / total_errors) * 100) if total_errors > 0 else 0
-                        st.metric(label="Top Class Misconception", value=most_common_error, delta=f"{percentage}% of mistakes")
+                render_analytics_panel(
+                    "Classroom Misconception Breakdown",
+                    class_history_df,
+                    "Zero student errors recorded in this section yet! Everything balances perfectly."
+                )
 
             with tab_roster:
                 st.subheader("Student Roster & Activity Feed")
@@ -402,21 +472,16 @@ if auth_status:
                         if not steps:
                             st.warning("Please review or correct the OCR text first.")
                         else:
-                            st.write(steps)
                             result = detect_first_error(steps)
                             status_str = "Passed" if result.passed else "Failed"
+                            st.caption(f"Checked {len(steps)} steps.")
                             
                             if result.passed:
                                 st.success(f"Passed: {result.message}")
                             else:
                                 st.error(f"Error found: {result.message}")
 
-                            msg_lower = result.message.lower()
-                            if "sign" in msg_lower: error_type_str = "Sign Error"
-                            elif "distrib" in msg_lower: error_type_str = "Distribution Error"
-                            elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
-                            elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
-                            else: error_type_str = "Conceptual/Other"
+                            error_type_str = classify_error_type(result.message, steps)
 
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                             history_df = load_history_df()
@@ -434,14 +499,17 @@ if auth_status:
             history_df = load_history_df()
             user_history_df = history_df[history_df["username"] == username]
 
+            render_analytics_panel(
+                "Your Individual Analytics",
+                user_history_df,
+                "You haven't scanned any math problems yet!"
+            )
+
+            st.markdown("---")
             if user_history_df.empty:
                 st.info("You haven't scanned any math problems yet!")
             else:
-                total_scans = len(user_history_df)
-                passed_scans = sum(user_history_df['status'] == "Passed")
-                st.metric(label="Success Rate", value=f"{int((passed_scans/total_scans)*100)}%", delta=f"{total_scans} Total Submissions")
-                
-                st.markdown("---")
+                st.subheader("Recent Attempts")
                 for _, item in user_history_df.iloc[::-1].iterrows():
                     col1, col2 = st.columns([1, 4])
                     with col1:

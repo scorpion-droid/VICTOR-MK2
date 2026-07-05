@@ -10,6 +10,18 @@ from App.parser import LOCAL_DICT, TRANSFORMATIONS, clean_expression
 RELATION_OPERATORS = ("<=", ">=", "=", "<", ">")
 
 
+def _normalize_relation_text(text: str) -> str:
+    return (
+        text.replace("≤", "<=")
+        .replace("≥", ">=")
+        .replace("≦", "<=")
+        .replace("≧", ">=")
+        .replace("＜", "<")
+        .replace("＞", ">")
+        .replace("＝", "=")
+    )
+
+
 def _parse_math_expression(expression: str):
     try:
         return parse_expr(
@@ -60,7 +72,7 @@ def _equation_difference_signature(diff) -> str:
 
 
 def _split_step_parts(step: str) -> list[str]:
-    return [part.strip() for part in re.split(r"[;\n]+", step) if part.strip()]
+    return [part.strip() for part in re.split(r"[;\n]+", _normalize_relation_text(step)) if part.strip()]
 
 
 def split_step_parts(step: str) -> list[str]:
@@ -68,6 +80,7 @@ def split_step_parts(step: str) -> list[str]:
 
 
 def _split_relation(part: str):
+    part = _normalize_relation_text(part)
     for operator in ("<=", ">=", "=", "<", ">"):
         if operator in part:
             left, right = part.split(operator, 1)
