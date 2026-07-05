@@ -1,36 +1,67 @@
 import streamlit as st
-import yaml
-from yaml.loader import SafeLoader
-import streamlit_authenticator as stauth
+import json
+import random
+import string
+import datetime
 from PIL import Image
 import pillow_heif
-import random
-import os
-import string
+import pandas as pd
+import streamlit_authenticator as stauth
+from streamlit_gsheets import GSheetsConnection
 from App.sanitiser import clean_image
 from App.checker import detect_first_error
 
-if os.path.exists("/data"):
-    DATA_PATH = "/data/config.yaml"
-else:
-    DATA_PATH = "config.yaml"  
-
-try:
-    with open(DATA_PATH, "r") as file:
-        config = yaml.safe_load(file)
-except FileNotFoundError:
-    config = {"credentials": {"usernames": {}}}
-
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
-with open('config.yaml') as file:
-    config = yaml.load(file, Loader=SafeLoader)
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def load_users_df():
+    try:
+        return conn.read(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", ttl=0)
+    except Exception:
+        return pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"])
+
+def load_history_df():
+    try:
+        return conn.read(spreadsheet=st.secrets["GSHEET_URL"], worksheet="History", ttl=0)
+    except Exception:
+        return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
+
+users_df = load_users_df()
+credentials = {"usernames": {}}
+
+for _, row in users_df.dropna(subset=["username"]).iterrows():
+
+    classes_dict = {}
+    if pd.notna(row.get("classes")) and str(row["classes"]).strip():
+        try:
+            classes_dict = json.loads(str(row["classes"]))
+        except Exception:
+            classes_dict = {}
+
+    credentials["usernames"][str(row["username"])] = {
+        "password": str(row["password"]),
+        "first_name": str(row["first_name"]) if pd.notna(row["first_name"]) else "",
+        "last_name": str(row["last_name"]) if pd.notna(row["last_name"]) else "",
+        "email": str(row["email"]) if pd.notna(row["email"]) else "",
+        "role": str(row["role"]) if pd.notna(row["role"]) else "student",
+        "class_code": str(row["class_code"]).strip().lower() if pd.notna(row["class_code"]) else "unassigned",
+        "classes": classes_dict
+    }
+
+config_cookie = {
+    'cookie': {
+        'name': 'victor_auth_cookie_v2',
+        'key': 'school_secure_key_123',
+        'expiry_days': 30
+    }
+}
 
 authenticator = stauth.Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
+    credentials,
+    config_cookie['cookie']['name'],
+    config_cookie['cookie']['key'],
+    config_cookie['cookie']['expiry_days']
 )
 
 st.session_state.setdefault("ocr_ready", False)
@@ -62,16 +93,11 @@ if auth_status:
     st.write(f'Welcome back, *{st.session_state["name"]}*!')
 
     username = st.session_state["username"]
-    user_profile = config['credentials']['usernames'].get(username, {})
+    user_profile = credentials["usernames"].get(username, {})
     user_role = user_profile.get('role', 'student')
 
     if user_role == "teacher":
         st.title("Teacher Hub")
-        
-        if 'classes' not in user_profile:
-            config['credentials']['usernames'][username]['classes'] = {}
-            with open('config.yaml', 'w') as file:
-                yaml.dump(config, file, default_flow_style=False)
         
         teacher_classes = user_profile.get('classes', {}) 
 
@@ -80,14 +106,16 @@ if auth_status:
             if st.button("Generate Class"):
                 if new_class_name.strip():
                     new_code = generate_class_code()
-                    config['credentials']['usernames'][username]['classes'][new_code] = new_class_name.strip()
-                    with open('config.yaml', 'w') as file:
-                        yaml.dump(config, file, default_flow_style=False)
+        
+                    teacher_classes[new_code] = new_class_name.strip()
+                    users_df = load_users_df()
+                    users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
+                    conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=users_df)
+                    
                     st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
                     st.rerun()
                 else:
                     st.error("Please enter a class name.")
-
 
         with st.sidebar.expander("Delete an Existing Class", expanded=False):
             if not teacher_classes:
@@ -106,12 +134,14 @@ if auth_status:
                 if st.button("Permanently Delete Class", type="primary"):
                     if confirm_delete:
                         deleted_class_name = teacher_classes[class_to_delete_code]
-                        config['credentials']['usernames'][username]['classes'].pop(class_to_delete_code, None)
-                        with open('config.yaml', 'w') as file:
-                            yaml.dump(config, file, default_flow_style=False)
+                        
+                        # Remove class and rewrite tracking dataframe to Google Sheet
+                        teacher_classes.pop(class_to_delete_code, None)
+                        users_df = load_users_df()
+                        users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
+                        conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=users_df)
 
                         st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
-                        
                         st.rerun()
                     else:
                         st.error("Please check the confirmation box before deleting.")
@@ -129,21 +159,18 @@ if auth_status:
         else:
             class_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
             selected_code = st.selectbox("Select Classroom Section:", options=list(class_options.keys()), format_func=lambda x: class_options[x])
-            
-            all_users = config['credentials']['usernames']
+         
             student_accounts = {
-                u: data for u, data in all_users.items() 
+                u: data for u, data in credentials["usernames"].items() 
                 if data.get('role') == 'student' and data.get('class_code') == selected_code
             }
             
-            total_students = len(student_accounts)
-            total_class_scans = 0
-            total_class_passed = 0
+            history_df = load_history_df()
+            class_history_df = history_df[history_df["username"].isin(student_accounts.keys())]
             
-            for s_user, s_data in student_accounts.items():
-                s_history = s_data.get('history', [])
-                total_class_scans += len(s_history)
-                total_class_passed += sum(1 for item in s_history if item['status'] == "Passed")
+            total_students = len(student_accounts)
+            total_class_scans = len(class_history_df)
+            total_class_passed = sum(class_history_df["status"] == "Passed")
                 
             st.markdown(f"### Dashboard for *{teacher_classes[selected_code]}*")
             st.info(f"Share this enrollment code with students to let them join: **{selected_code}**")
@@ -171,17 +198,13 @@ if auth_status:
                     "Variable Mismatch": 0, 
                     "Conceptual/Other": 0
                 }
-                has_failures = False
                 
-                for s_user, s_data in student_accounts.items():
-                    for log in s_data.get('history', []):
-                        if log.get('status') == "Failed":
-                            e_type = log.get('error_type', 'Conceptual/Other')
-                            if e_type in error_counts:
-                                error_counts[e_type] += 1
-                                has_failures = True
+                failed_scans = class_history_df[class_history_df["status"] == "Failed"]
+                for e_type in failed_scans["error_type"]:
+                    if e_type in error_counts:
+                        error_counts[e_type] += 1
                 
-                if not has_failures:
+                if len(failed_scans) == 0:
                     st.success("Zero student errors recorded in this section yet! Everything balances perfectly.")
                 else:
                     col_chart, col_insights = st.columns([3, 2])
@@ -194,7 +217,7 @@ if auth_status:
                         st.markdown("#### Automated Action Items")
                         total_errors = sum(error_counts.values())
                         most_common_error = max(error_counts, key=error_counts.get)
-                        percentage = int((error_counts[most_common_error] / total_errors) * 100)
+                        percentage = int((error_counts[most_common_error] / total_errors) * 100) if total_errors > 0 else 0
                         
                         st.metric(label="Top Class Misconception", value=most_common_error, delta=f"{percentage}% of mistakes")
                         
@@ -216,12 +239,13 @@ if auth_status:
                     st.caption("No students have entered this classroom code yet.")
                 else:
                     for s_user, s_data in student_accounts.items():
-                        s_history = s_data.get('history', [])
-                        with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history)} submissions"):
-                            if not s_history:
+                        s_history_df = class_history_df[class_history_df["username"] == s_user]
+                        
+                        with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
+                            if s_history_df.empty:
                                 st.caption("This student hasn't checked any equations yet.")
                             else:
-                                for item in reversed(s_history):
+                                for _, item in s_history_df.iloc[::-1].iterrows():
                                     col1, col2 = st.columns([1, 5])
                                     with col1:
                                         if item['status'] == "Passed":
@@ -303,38 +327,38 @@ if auth_status:
                             else:
                                 error_type_str = "Conceptual/Other"
 
-                            if 'history' not in config['credentials']['usernames'][username]:
-                                config['credentials']['usernames'][username]['history'] = []
-
-                            import datetime
+                            # Append math resolution to flat History spreadsheet tab
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
-
-                            config['credentials']['usernames'][username]['history'].append({
+                            history_df = load_history_df()
+                            
+                            new_log = pd.DataFrame([{
+                                'username': username,
                                 'date': timestamp,
                                 'equation': " ➔ ".join(steps),
                                 'status': status_str,
                                 'message': result.message,
-                                "error_type": error_type_str
-                                })
+                                'error_type': error_type_str
+                            }])
 
-                            with open('config.yaml', 'w') as file:
-                                yaml.dump(config, file, default_flow_style=False)
+                            updated_history = pd.concat([history_df, new_log], ignore_index=True)
+                            conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="History", data=updated_history)
 
         with tab2:
             st.title("Your Performance History")
             st.subheader("Track your math submissions over time")
             
-            history = user_profile.get('history', [])
+            history_df = load_history_df()
+            user_history_df = history_df[history_df["username"] == username]
 
-            if not history:
+            if user_history_df.empty:
                 st.info("You haven't scanned any math problems yet! Your history log will appear here.")
             else:
-                total_scans = len(history)
-                passed_scans = sum(1 for item in history if item['status'] == "Passed")
+                total_scans = len(user_history_df)
+                passed_scans = sum(user_history_df['status'] == "Passed")
                 st.metric(label="Success Rate", value=f"{int((passed_scans/total_scans)*100)}%", delta=f"{total_scans} Total Submissions")
                 
                 st.markdown("---")
-                for item in reversed(history):
+                for _, item in user_history_df.iloc[::-1].iterrows():
                     col1, col2 = st.columns([1, 4])
                     with col1:
                         if item['status'] == "Passed":
@@ -374,23 +398,28 @@ elif auth_status is None or auth_status == "":
             email_of_user, username, name = authenticator.register_user(location="main")
 
             if username:
+                users_df = load_users_df()
+              
+                hashed_pw = authenticator.credentials["usernames"][username]["password"]
+                
+                new_user_row = pd.DataFrame([{
+                    "username": username,
+                    "password": hashed_pw,
+                    "first_name": name,
+                    "last_name": "",
+                    "email": email_of_user,
+                    "role": 'student' if signup_role == "Student" else 'teacher',
+                    "class_code": student_class_code.strip().lower() if signup_role == "Student" else "unassigned",
+                    "classes": json.dumps({}) if signup_role == "Teacher" else ""
+                }])
+                
+                updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
+                conn.update(spreadsheet=st.secrets["GSHEET_URL"], worksheet="Users", data=updated_users)
+
                 if signup_role == "Student":
-                    config['credentials']['usernames'][username]['role'] = 'student'
-                    config['credentials']['usernames'][username]['class_code'] = student_class_code.strip().lower() if student_class_code else 'unassigned'
-
-                    with open('config.yaml', 'w') as file:
-                        yaml.dump(config, file, default_flow_style=False)
-
                     st.success(f"Account created! You have successfully joined classroom code `{student_class_code.strip().lower()}`. Click the 'Login' tab to access V.I.C.T.O.R.")
-
-                elif signup_role == "Teacher":
-                    config['credentials']['usernames'][username]['role'] = 'teacher'
-                    config['credentials']['usernames'][username]['classes'] = {}
-
-                    with open('config.yaml', 'w') as file:
-                        yaml.dump(config, file, default_flow_style=False)
-
-                    st.success("Teacher profile registered perfectly! Flip over to the 'Login' tab to launch your administrative hub.")
+                else:
+                    st.success("Teacher profile registered! Flip over to the 'Login' tab to launch your administrative hub.")
 
         except Exception as e:
             st.error(e)

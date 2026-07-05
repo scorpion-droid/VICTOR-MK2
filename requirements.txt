@@ -6,4 +6,5 @@ pillow
 streamlit-authenticator
 pyyaml
 sympy
-pillow_heif
+pillow-heif
+st-gsheets-connection
