@@ -54,15 +54,23 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
         worksheet = sh.worksheet(worksheet_name)
-        
-        # Keep structures aligned perfectly
+
+        existing_records = worksheet.get_all_records()
+        existing_df = pd.DataFrame(existing_records) if existing_records else pd.DataFrame(columns=target_columns)
+
         for col in target_columns:
             if col not in df.columns:
                 df[col] = ""
-        
+            if col not in existing_df.columns:
+                existing_df[col] = ""
+
         cleaned_df = df[target_columns].fillna("")
-        data_matrix = [target_columns] + cleaned_df.values.tolist()
-        
+        existing_df = existing_df[target_columns].fillna("")
+
+        merged_df = pd.concat([existing_df, cleaned_df], ignore_index=True)
+        merged_df = merged_df.drop_duplicates(subset=target_columns, keep="last").fillna("")
+        data_matrix = [target_columns] + merged_df.values.tolist()
+
         worksheet.clear()
         worksheet.update(data_matrix)
         return True
