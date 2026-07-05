@@ -6,6 +6,7 @@ import datetime
 from PIL import Image
 import pillow_heif
 import pandas as pd
+import gspread
 import streamlit_authenticator as stauth
 from streamlit_gsheets import GSheetsConnection
 from App.sanitiser import clean_image
@@ -13,10 +14,26 @@ from App.checker import detect_first_error
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
-# 1. Establish Secure Cloud Connection to Google Sheets
+# Initialize connections
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Helper functions reading from the configuration-bound connection tabs
+@st.cache_resource(ttl=0)
+def get_gspread_client():
+    try:
+        creds_dict = dict(st.secrets["gserviceaccount"])
+        sheet_id = creds_dict.get("spreadsheet_id")
+        # Strip out the non-standard gspread config key before passing to authorization
+        if "spreadsheet_id" in creds_dict:
+            del creds_dict["spreadsheet_id"]
+        gc = gspread.service_account_from_dict(creds_dict)
+        return gc, sheet_id
+    except Exception as e:
+        st.error(f"Gspread client error: {e}")
+        return None, None
+
+gc, SPREADSHEET_ID = get_gspread_client()
+
+# Safe database readers using the public connection manager
 def load_users_df():
     try:
         return conn.read(worksheet="Users", ttl=0)
@@ -29,7 +46,32 @@ def load_history_df():
     except Exception:
         return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
 
-# 2. Extract credentials to feed the Authenticator
+# Bulletproof direct cell-matrix overwriter for saving modifications
+def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
+    if not gc or not SPREADSHEET_ID:
+        st.error("Database initialization failed. Cannot save.")
+        return
+    try:
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(worksheet_name)
+        
+        # Keep structures aligned perfectly
+        for col in target_columns:
+            if col not in df.columns:
+                df[col] = ""
+        
+        cleaned_df = df[target_columns].fillna("")
+        data_matrix = [target_columns] + cleaned_df.values.tolist()
+        
+        worksheet.clear()
+        worksheet.update(data_matrix)
+    except Exception as e:
+        st.error(f"Failed writing data to sheet tab '{worksheet_name}': {e}")
+
+USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes"]
+HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
+
+# Extract and map active system accounts
 users_df = load_users_df()
 credentials = {"usernames": {}}
 
@@ -82,7 +124,6 @@ def render_login() -> None:
             authenticator.cookie_controller.delete_cookie()
             for key in ("authentication_status", "name", "username", "logout"):
                 st.session_state.pop(key, None)
-
             st.warning("Your saved login session was stale. Resetting environment...")
             st.rerun()
         else:
@@ -100,7 +141,6 @@ if auth_status:
 
     if user_role == "teacher":
         st.title("Teacher Hub")
-        
         teacher_classes = user_profile.get('classes', {}) 
 
         with st.sidebar.expander("Create a New Class", expanded=False):
@@ -112,7 +152,7 @@ if auth_status:
                     teacher_classes[new_code] = new_class_name.strip()
                     users_df = load_users_df()
                     users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                    conn.update(worksheet="Users", data=users_df)
+                    save_dataframe_to_worksheet("Users", users_df, USER_COLS)
                     
                     st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
                     st.rerun()
@@ -132,15 +172,13 @@ if auth_status:
                 )
 
                 confirm_delete = st.checkbox(f"I understand this deletes all logs associated with code {class_to_delete_code}", key="confirm_delete_chk")
-                
                 if st.button("Permanently Delete Class", type="primary"):
                     if confirm_delete:
                         deleted_class_name = teacher_classes[class_to_delete_code]
-                        
                         teacher_classes.pop(class_to_delete_code, None)
                         users_df = load_users_df()
                         users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                        conn.update(worksheet="Users", data=users_df)
+                        save_dataframe_to_worksheet("Users", users_df, USER_COLS)
 
                         st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
                         st.rerun()
@@ -186,19 +224,11 @@ if auth_status:
                 st.metric(label="Class Accuracy Rate", value=class_rate)
                 
             st.markdown("---")
-            
             tab_analytics, tab_roster = st.tabs(["Concept Analytics Insights", "Student Roster & Live Logs"])
             
             with tab_analytics:
                 st.subheader("Classroom Misconception Breakdown")
-                
-                error_counts = {
-                    "Sign Error": 0, 
-                    "Distribution Error": 0, 
-                    "Arithmetic Error": 0, 
-                    "Variable Mismatch": 0, 
-                    "Conceptual/Other": 0
-                }
+                error_counts = {"Sign Error": 0, "Distribution Error": 0, "Arithmetic Error": 0, "Variable Mismatch": 0, "Conceptual/Other": 0}
                 
                 failed_scans = class_history_df[class_history_df["status"] == "Failed"]
                 for e_type in failed_scans["error_type"]:
@@ -209,30 +239,13 @@ if auth_status:
                     st.success("Zero student errors recorded in this section yet! Everything balances perfectly.")
                 else:
                     col_chart, col_insights = st.columns([3, 2])
-                    
                     with col_chart:
-                        st.caption("Mistake frequencies detected across all collective submissions:")
                         st.bar_chart(error_counts)
-                        
                     with col_insights:
-                        st.markdown("#### Automated Action Items")
                         total_errors = sum(error_counts.values())
                         most_common_error = max(error_counts, key=error_counts.get)
                         percentage = int((error_counts[most_common_error] / total_errors) * 100) if total_errors > 0 else 0
-                        
                         st.metric(label="Top Class Misconception", value=most_common_error, delta=f"{percentage}% of mistakes")
-                        
-                        if most_common_error == "Sign Error":
-                            st.warning("Students are commonly mismanaging negative integers when shifting expressions across `=` signs.")
-                            st.info("**Suggested Intervention:** Run a 5-minute warm-up lesson focused strictly on performing matching inverse operations simultaneously to both sides.")
-                        elif most_common_error == "Distribution Error":
-                            st.warning("Students are dropping coefficients outside of group parentheses items.")
-                            st.info("**Suggested Intervention:** Demonstrate the 'rainbow multiplication arrow method' on the whiteboard before next assignments.")
-                        elif most_common_error == "Variable Mismatch":
-                            st.warning("Students are accidentally misplacing or changing variables mid-equation.")
-                            st.info("**Suggested Intervention:** Advise students to carefully utilize the handwriting validation text area tool inside V.I.C.T.O.R before submitting.")
-                        else:
-                            st.info("General arithmetic and evaluation errors are standard. Keep tracking step progression trends over the coming assignments.")
 
             with tab_roster:
                 st.subheader("Student Roster & Activity Feed")
@@ -241,7 +254,6 @@ if auth_status:
                 else:
                     for s_user, s_data in student_accounts.items():
                         s_history_df = class_history_df[class_history_df["username"] == s_user]
-                        
                         with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
                             if s_history_df.empty:
                                 st.caption("This student hasn't checked any equations yet.")
@@ -249,10 +261,7 @@ if auth_status:
                                 for _, item in s_history_df.iloc[::-1].iterrows():
                                     col1, col2 = st.columns([1, 5])
                                     with col1:
-                                        if item['status'] == "Passed":
-                                            st.success("PASSED")
-                                        else:
-                                            st.error("ERROR")
+                                        st.success("PASSED") if item['status'] == "Passed" else st.error("ERROR")
                                     with col2:
                                         st.markdown(f"**Date:** {item['date']}")
                                         st.caption(f"**Steps Detected:** {item['equation']}")
@@ -265,7 +274,6 @@ if auth_status:
         with tab1:
             st.title("V.I.C.T.O.R")
             st.subheader(f"Upload your math steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
-
             uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg", "heic", "heif"])
 
             if uploaded_file is not None:
@@ -281,9 +289,7 @@ if auth_status:
                             file_extension = uploaded_file.name.split(".")[-1].lower()
                             if file_extension in ["heic", "heif"]:
                                 heif_file = pillow_heif.read_heif(uploaded_file.getvalue())
-                                image = Image.frombytes(
-                                    heif_file.mode, heif_file.size, heif_file.data, "raw", heif_file.mode, heif_file.stride
-                                )
+                                image = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw", heif_file.mode, heif_file.stride)
                                 image.save("temp_image.png", format="PNG")
                             else:
                                 with open("temp_image.png", "wb") as f:
@@ -293,65 +299,50 @@ if auth_status:
                             st.session_state["ocr_ready"] = True
                         except Exception as e:
                             st.error("The AI service is experiencing heavy traffic. Please try again.")
-                            st.caption(f"Technical info: {e}")
 
                 if st.session_state["ocr_ready"]:
                     st.info("Review the OCR text below and fix any symbol mistakes before checking.")
-                    st.caption("Use `*` for multiplication and `x` for a variable.")
                     st.text_area("Extracted Steps:", key="ocr_text", height=240)
 
                     if st.button("Confirm OCR and Check"):
                         steps = [s.strip() for s in st.session_state["ocr_text"].splitlines() if s.strip()]
-
                         if not steps:
                             st.warning("Please review or correct the OCR text first.")
                         else:
                             st.write(steps)
                             result = detect_first_error(steps)
-
+                            status_str = "Passed" if result.passed else "Failed"
+                            
                             if result.passed:
-                                status_str = "Passed"
                                 st.success(f"Passed: {result.message}")
                             else:
-                                status_str = "Failed"
                                 st.error(f"Error found: {result.message}")
 
                             msg_lower = result.message.lower()
-                            if "sign" in msg_lower:
-                                error_type_str = "Sign Error"
-                            elif "distrib" in msg_lower:
-                                error_type_str = "Distribution Error"
-                            elif "arithmetic" in msg_lower or "calculat" in msg_lower:
-                                error_type_str = "Arithmetic Error"
-                            elif "variable" in msg_lower or "drop" in msg_lower:
-                                error_type_str = "Variable Mismatch"
-                            else:
-                                error_type_str = "Conceptual/Other"
+                            if "sign" in msg_lower: error_type_str = "Sign Error"
+                            elif "distrib" in msg_lower: error_type_str = "Distribution Error"
+                            elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
+                            elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
+                            else: error_type_str = "Conceptual/Other"
 
                             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                             history_df = load_history_df()
                             
                             new_log = pd.DataFrame([{
-                                'username': username,
-                                'date': timestamp,
-                                'equation': " ➔ ".join(steps),
-                                'status': status_str,
-                                'message': result.message,
-                                'error_type': error_type_str
+                                'username': username, 'date': timestamp, 'equation': " ➔ ".join(steps),
+                                'status': status_str, 'message': result.message, 'error_type': error_type_str
                             }])
 
                             updated_history = pd.concat([history_df, new_log], ignore_index=True)
-                            conn.update(worksheet="History", data=updated_history)
+                            save_dataframe_to_worksheet("History", updated_history, HISTORY_COLS)
 
         with tab2:
             st.title("Your Performance History")
-            st.subheader("Track your math submissions over time")
-            
             history_df = load_history_df()
             user_history_df = history_df[history_df["username"] == username]
 
             if user_history_df.empty:
-                st.info("You haven't scanned any math problems yet! Your history log will appear here.")
+                st.info("You haven't scanned any math problems yet!")
             else:
                 total_scans = len(user_history_df)
                 passed_scans = sum(user_history_df['status'] == "Passed")
@@ -361,10 +352,7 @@ if auth_status:
                 for _, item in user_history_df.iloc[::-1].iterrows():
                     col1, col2 = st.columns([1, 4])
                     with col1:
-                        if item['status'] == "Passed":
-                            st.success("PASSED")
-                        else:
-                            st.error("ERROR")
+                        st.success("PASSED") if item['status'] == "Passed" else st.error("ERROR")
                     with col2:
                         st.markdown(f"**Date:** {item['date']}")
                         st.caption(f"**Steps Detected:** {item['equation']}")
@@ -374,52 +362,37 @@ if auth_status:
 elif auth_status is False:
     st.error('Username/password is incorrect')
     init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
-    if init_mode == "Login":
-        render_login()
+    if init_mode == "Login": render_login()
 
 elif auth_status is None or auth_status == "":
     init_mode = st.radio("Choose Action:", ["Login", "Sign Up"], horizontal=True)
     if init_mode == "Login":
         render_login()
         st.warning('Please enter your username and password')
-
     elif init_mode == "Sign Up":
         try:
-            signup_role = st.radio("I am registering as a:", ["Student", "Teacher"], horizontal=True, key="signup_role_selector")
-
+            signup_role = st.radio("I am registering as a:", ["Student", "Teacher"], horizontal=True)
             if signup_role == "Student":
-                student_class_code = st.text_input("Enter Classroom Code from your Teacher:", key="signup_student_code_field")
-            else:
-                st.info("As a Teacher, you will be able to instantly generate your own custom classroom sections from your dashboard once logged in.")
-
-            st.markdown("---")
-            st.caption("Fill in your account details below to finalize registration:")
+                student_class_code = st.text_input("Enter Classroom Code from your Teacher:")
 
             email_of_user, username, name = authenticator.register_user(location="main")
-
             if username:
                 users_df = load_users_df()
+                plain_password = st.session_state.get("victor_main_login", {}).get("password", st.session_state.get("password", ""))
+                hashed_pw = stauth.Hasher([plain_password]).generate()[0] if plain_password else ""
                 
-                hashed_pw = credentials["usernames"][username]["password"]
-                
+                if not hashed_pw and username in credentials.get("usernames", {}):
+                    hashed_pw = credentials["usernames"][username].get("password", "")
+
                 new_user_row = pd.DataFrame([{
-                    "username": username,
-                    "password": hashed_pw,
-                    "first_name": name,
-                    "last_name": "",
-                    "email": email_of_user,
+                    "username": username, "password": hashed_pw, "first_name": name, "last_name": "", "email": email_of_user,
                     "role": 'student' if signup_role == "Student" else 'teacher',
                     "class_code": student_class_code.strip().lower() if signup_role == "Student" else "unassigned",
                     "classes": json.dumps({}) if signup_role == "Teacher" else ""
                 }])
                 
                 updated_users = pd.concat([users_df, new_user_row], ignore_index=True)
-                conn.update(worksheet="Users", data=updated_users)
-
-                if signup_role == "Student":
-                    st.success(f"Account created! You have successfully joined classroom code `{student_class_code.strip().lower()}`. Click the 'Login' tab to access V.I.C.T.O.R.")
-                else:
-                    st.success("Teacher profile registered perfectly! Flip over to the 'Login' tab to launch your administrative hub.")
-
+                save_dataframe_to_worksheet("Users", updated_users, USER_COLS)
+                st.success("Account created successfully! Flip over to the 'Login' tab.")
         except Exception as e:
             st.error(e)

@@ -8,3 +8,4 @@ pyyaml
 sympy
 pillow-heif
 st-gsheets-connection
+gspread
