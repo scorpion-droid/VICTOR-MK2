@@ -3,6 +3,7 @@ import json
 import random
 import string
 import datetime
+import html
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -191,6 +192,47 @@ def render_analytics_panel(title: str, history_df: pd.DataFrame, empty_message: 
         most_common_error = max(error_counts, key=error_counts.get)
         percentage = int((error_counts[most_common_error] / failed_total) * 100) if failed_total > 0 else 0
         st.metric(label="Top Error Type", value=most_common_error, delta=f"{percentage}% of mistakes")
+
+def render_history_card(date_text: str, steps_text: str, message_text: str, passed: bool, header_text: str | None = None) -> None:
+    status_label = "PASSED" if passed else "ERROR"
+    status_bg = "#163d2e" if passed else "#4b2730"
+    status_fg = "#5ee38a" if passed else "#ff7373"
+    header_html = f"<div style='font-size:0.95rem; color:#9ca3af; margin-bottom:0.35rem;'>{html.escape(header_text)}</div>" if header_text else ""
+
+    st.markdown(
+        f"""
+        <div style="
+            border: 1px solid rgba(255,255,255,0.10);
+            border-radius: 18px;
+            padding: 1rem 1.1rem;
+            margin-bottom: 1rem;
+            background: rgba(255,255,255,0.03);
+        ">
+            {header_html}
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; flex-wrap:wrap;">
+                <div style="
+                    background:{status_bg};
+                    color:{status_fg};
+                    border-radius:14px;
+                    padding:0.55rem 0.9rem;
+                    font-size:0.95rem;
+                    font-weight:700;
+                    letter-spacing:0.04em;
+                    min-width:92px;
+                    text-align:center;
+                ">{status_label}</div>
+                <div style="color:#e5e7eb; font-size:1.15rem; font-weight:700;">Date: {html.escape(date_text)}</div>
+            </div>
+            <div style="margin-top:0.9rem; color:#d1d5db; font-size:1.3rem; line-height:1.7; font-weight:600; word-break:break-word;">
+                {html.escape(steps_text)}
+            </div>
+            <div style="margin-top:0.85rem; color:#cbd5e1; font-size:1.02rem; line-height:1.7;">
+                {html.escape(message_text)}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
@@ -422,14 +464,13 @@ if auth_status:
                                 st.caption("This student hasn't checked any equations yet.")
                             else:
                                 for _, item in s_history_df.iloc[::-1].iterrows():
-                                    col1, col2 = st.columns([1, 5])
-                                    with col1:
-                                        st.success("PASSED") if item['status'] == "Passed" else st.error("ERROR")
-                                    with col2:
-                                        st.markdown(f"**Date:** {item['date']}")
-                                        st.caption(f"**Steps Detected:** {item['equation']}")
-                                        st.markdown(f"*{item['message']}*")
-                                    st.markdown("---")
+                                    render_history_card(
+                                        date_text=str(item["date"]),
+                                        steps_text=str(item["equation"]),
+                                        message_text=str(item["message"]),
+                                        passed=item["status"] == "Passed",
+                                        header_text=None,
+                                    )
 
     else:
         tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
@@ -511,14 +552,12 @@ if auth_status:
             else:
                 st.subheader("Recent Attempts")
                 for _, item in user_history_df.iloc[::-1].iterrows():
-                    col1, col2 = st.columns([1, 4])
-                    with col1:
-                        st.success("PASSED") if item['status'] == "Passed" else st.error("ERROR")
-                    with col2:
-                        st.markdown(f"**Date:** {item['date']}")
-                        st.caption(f"**Steps Detected:** {item['equation']}")
-                        st.markdown(f"*{item['message']}*")
-                    st.markdown("---")
+                    render_history_card(
+                        date_text=str(item["date"]),
+                        steps_text=str(item["equation"]),
+                        message_text=str(item["message"]),
+                        passed=item["status"] == "Passed",
+                    )
 
 elif auth_status is False:
     st.error('Username/password is incorrect')
