@@ -209,6 +209,38 @@ def render_history_card(date_text: str, steps_text: str, message_text: str, pass
             st.markdown("**Feedback:**")
             st.markdown(message_text)
 
+def get_teacher_class_summary(class_code: str, teacher_classes: dict, credentials: dict, history_df: pd.DataFrame) -> dict:
+    class_name = teacher_classes.get(class_code, class_code)
+    student_accounts = {
+        u: data for u, data in credentials["usernames"].items()
+        if data.get("role") == "student" and data.get("class_code") == class_code
+    }
+    class_history_df = history_df[history_df["username"].isin(student_accounts.keys())] if not history_df.empty else pd.DataFrame(columns=HISTORY_COLS)
+    attention_names = [
+        data.get("first_name", u)
+        for u, data in student_accounts.items()
+        if not class_history_df.empty and not class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Passed")].empty
+        and class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Failed")].shape[0] >= class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Passed")].shape[0]
+    ]
+    if class_history_df.empty:
+        total_uploads = 0
+        ai_summary = "No uploads yet for this class."
+    else:
+        total_uploads = len(class_history_df)
+        total_passed = int((class_history_df["status"] == "Passed").sum())
+        total_failed = int((class_history_df["status"] == "Failed").sum())
+        ai_summary = f"{total_passed} passed, {total_failed} failed. {len(attention_names)} student(s) may need extra support."
+    return {
+        "class_name": class_name,
+        "class_code": class_code,
+        "student_accounts": student_accounts,
+        "class_history_df": class_history_df,
+        "total_students": len(student_accounts),
+        "total_uploads": len(class_history_df),
+        "attention_names": attention_names,
+        "ai_summary": ai_summary,
+    }
+
 def build_credentials(source_df: pd.DataFrame) -> dict:
     credentials = {"usernames": {}}
 
@@ -240,7 +272,6 @@ def build_credentials(source_df: pd.DataFrame) -> dict:
 
     return credentials
 
-# Extract and map active system accounts
 users_df = load_users_df()
 credentials = build_credentials(users_df)
 
@@ -390,62 +421,41 @@ if auth_status:
         if not teacher_classes:
             st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
         else:
-            class_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
-            selected_code = st.selectbox("Select Classroom Section:", options=list(class_options.keys()), format_func=lambda x: class_options[x])
-            
-            student_accounts = {
-                u: data for u, data in credentials["usernames"].items() 
-                if data.get('role') == 'student' and data.get('class_code') == selected_code
-            }
-            
+            st.subheader("Your Classrooms")
+            st.caption("Click a classroom card to open its detailed view.")
             history_df = load_history_df()
-            class_history_df = history_df[history_df["username"].isin(student_accounts.keys())]
-            
-            total_students = len(student_accounts)
-            total_class_scans = len(class_history_df)
-            total_class_passed = sum(class_history_df["status"] == "Passed")
-                
-            st.markdown(f"### Dashboard for *{teacher_classes[selected_code]}*")
-            st.info(f"Share this enrollment code with students to let them join: **{selected_code}**")
-            
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric(label="Students Enrolled", value=total_students)
-            with c2:
-                st.metric(label="Total Checks Run", value=total_class_scans)
-            with c3:
-                class_rate = f"{int((total_class_passed/total_class_scans)*100)}%" if total_class_scans > 0 else "N/A"
-                st.metric(label="Class Accuracy Rate", value=class_rate)
-                
-            st.markdown("---")
-            tab_analytics, tab_roster = st.tabs(["Concept Analytics Insights", "Student Roster & Live Logs"])
-            
-            with tab_analytics:
-                render_analytics_panel(
-                    "Classroom Misconception Breakdown",
-                    class_history_df,
-                    "Zero student errors recorded in this section yet! Everything balances perfectly."
-                )
 
-            with tab_roster:
-                st.subheader("Student Roster & Activity Feed")
-                if not student_accounts:
-                    st.caption("No students have entered this classroom code yet.")
-                else:
-                    for s_user, s_data in student_accounts.items():
-                        s_history_df = class_history_df[class_history_df["username"] == s_user]
-                        with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
-                            if s_history_df.empty:
-                                st.caption("This student hasn't checked any equations yet.")
-                            else:
-                                for _, item in s_history_df.iloc[::-1].iterrows():
-                                    render_history_card(
-                                        date_text=str(item["date"]),
-                                        steps_text=str(item["equation"]),
-                                        message_text=str(item["message"]),
-                                        passed=item["status"] == "Passed",
-                                        header_text=None,
-                                    )
+            class_cols = st.columns(2)
+
+            for idx, (class_code, class_name) in enumerate(teacher_classes.items()):
+                with class_cols[idx % 2]:
+                    class_data = get_teacher_class_summary(class_code, teacher_classes, credentials, history_df)
+                    total_students = class_data["total_students"]
+                    total_uploads = class_data["total_uploads"]
+                    attention_names = class_data["attention_names"]
+                    ai_summary = class_data["ai_summary"]
+
+                    with st.container(border=True):
+                        st.markdown(f"### {class_name}")
+                        st.caption(f"Class code: `{class_code}`")
+                        metric_cols = st.columns(2)
+                        with metric_cols[0]:
+                            st.metric("# Students", total_students)
+                        with metric_cols[1]:
+                            st.metric("# Uploads", total_uploads)
+
+                        st.write("Students needing attention:")
+                        if attention_names:
+                            st.write(", ".join(attention_names))
+                        else:
+                            st.write("None so far.")
+
+                        st.write("Class Summary (AI):")
+                        st.write(ai_summary)
+
+                        if st.button("Open Class", key=f"open_class_{class_code}"):
+                            st.session_state["selected_class_code"] = class_code
+                            st.switch_page("pages/class_detail.py")
 
     else:
         tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
