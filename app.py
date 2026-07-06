@@ -3,6 +3,7 @@ import json
 import random
 import string
 import datetime
+import functools
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -55,7 +56,7 @@ def load_history_df():
             return pd.DataFrame(records) if records else pd.DataFrame(columns=HISTORY_COLS)
         return conn.read(worksheet="History", ttl=0)
     except Exception:
-        return pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type"])
+        return pd.DataFrame(columns=HISTORY_COLS)
 
 def normalize_auth_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -106,7 +107,15 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
         return False
 
 USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"]
-HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type"]
+HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type", "topic"]
+
+TOPICS = [
+    "Linear Equations",
+    "Factorization",
+    "Systems of Equations",
+    "Area & Volume",
+    "Inequalities",
+]
 
 ERROR_BUCKETS = [
     "Sign Error",
@@ -357,6 +366,113 @@ def render_login() -> None:
 def get_current_user_profile() -> dict:
     current_username = st.session_state.get("username", "")
     return credentials["usernames"].get(current_username, {})
+
+def _topic_slug(topic: str) -> str:
+    return topic.lower().replace(" ", "_").replace("&", "and")
+
+def render_student_checker_page(topic: str) -> None:
+    slug = _topic_slug(topic)
+    last_file_key = f"last_uploaded_file_{slug}"
+    ocr_text_key = f"ocr_text_{slug}"
+    ocr_ready_key = f"ocr_ready_{slug}"
+
+    st.session_state.setdefault(ocr_text_key, "")
+    st.session_state.setdefault(ocr_ready_key, False)
+
+    st.title("V.I.C.T.O.R")
+    st.subheader(f"{topic} — Upload your steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
+    uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg", "heic", "heif"], key=f"uploader_{slug}")
+
+    if uploaded_file is not None:
+        current_file_name = uploaded_file.name
+        if st.session_state.get(last_file_key) != current_file_name:
+            st.session_state[last_file_key] = current_file_name
+            st.session_state[ocr_text_key] = ""
+            st.session_state[ocr_ready_key] = False
+
+        if st.button("Run OCR", key=f"run_ocr_{slug}"):
+            with st.spinner('Analyzing handwriting and verifying steps...'):
+                try:
+                    file_extension = uploaded_file.name.split(".")[-1].lower()
+                    if file_extension in ["heic", "heif"]:
+                        heif_file = pillow_heif.read_heif(uploaded_file.getvalue())
+                        image = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw", heif_file.mode, heif_file.stride)
+                        image.save("temp_image.png", format="PNG")
+                    else:
+                        with open("temp_image.png", "wb") as f:
+                            f.write(uploaded_file.getvalue())
+
+                    st.session_state[ocr_text_key] = clean_image("temp_image.png").strip()
+                    st.session_state[ocr_ready_key] = True
+                except Exception:
+                    st.error("The AI service is experiencing heavy traffic. Please try again.")
+
+        if st.session_state[ocr_ready_key]:
+            st.info("Review the OCR text below and fix any symbol mistakes before checking.")
+            st.text_area("Extracted Steps:", key=ocr_text_key, height=240)
+
+            if st.button("Confirm OCR and Check", key=f"confirm_{slug}"):
+                steps = [s.strip() for s in st.session_state[ocr_text_key].splitlines() if s.strip()]
+                if not steps:
+                    st.warning("Please review or correct the OCR text first.")
+                else:
+                    result = detect_first_error(steps)
+                    status_str = "Passed" if result.passed else "Failed"
+
+                    if result.passed:
+                        st.success(f"Passed: {result.message}")
+                    else:
+                        st.error(f"Error found: {result.message}")
+
+                    msg_lower = result.message.lower()
+                    if "sign" in msg_lower: error_type_str = "Sign Error"
+                    elif "distrib" in msg_lower: error_type_str = "Distribution Error"
+                    elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
+                    elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
+                    else: error_type_str = "Conceptual/Other"
+
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
+                    history_df = load_history_df()
+
+                    new_log = pd.DataFrame([{
+                        'username': username, 'date': timestamp, 'equation': "\n".join(steps),
+                        'status': status_str, 'message': result.message, 'error_type': error_type_str,
+                        'topic': topic,
+                    }])
+
+                    updated_history = pd.concat([history_df, new_log], ignore_index=True)
+                    save_dataframe_to_worksheet("History", updated_history, HISTORY_COLS)
+
+def render_student_history_page() -> None:
+    st.title("Your Performance History")
+    history_df = load_history_df()
+    user_history_df = history_df[history_df["username"] == username]
+
+    topic_filter = st.selectbox("Filter by topic", ["All Topics"] + TOPICS, key="history_topic_filter")
+    if topic_filter != "All Topics" and "topic" in user_history_df.columns:
+        filtered_df = user_history_df[user_history_df["topic"] == topic_filter]
+    else:
+        filtered_df = user_history_df
+
+    render_analytics_panel(
+        "Your Individual Analytics",
+        filtered_df,
+        "You haven't scanned any math problems yet!"
+    )
+
+    st.markdown("---")
+    if filtered_df.empty:
+        st.info("You haven't scanned any math problems yet!")
+    else:
+        st.subheader("Recent Attempts")
+        for _, item in filtered_df.iloc[::-1].iterrows():
+            render_history_card(
+                date_text=str(item["date"]),
+                steps_text=str(item["equation"]),
+                message_text=str(item["message"]),
+                passed=item["status"] == "Passed",
+                header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
+            )
 
 def render_teacher_dashboard() -> None:
     global teacher_detail_page
