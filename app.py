@@ -440,15 +440,15 @@ if auth_status:
                         st.caption(f"Class code: `{class_code}`")
                         metric_cols = st.columns(2)
                         with metric_cols[0]:
-                            st.metric("# Students", total_students)
+                            st.metric("# Students", total_students, color="blue")
                         with metric_cols[1]:
-                            st.metric("# Uploads", total_uploads)
+                            st.metric("# Uploads", total_uploads, color="blue")
 
                         st.write("Students needing attention:")
                         if attention_names:
-                            st.write(", ".join(attention_names))
+                            st.write(", ".join(attention_names), color="red")
                         else:
-                            st.write("None so far.")
+                            st.write("None so far.", color="green")
 
                         st.write("Class Summary (AI):")
                         st.write(ai_summary)
