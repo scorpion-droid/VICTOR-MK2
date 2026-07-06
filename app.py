@@ -299,8 +299,6 @@ authenticator = stauth.Authenticate(
     config_cookie['cookie']['expiry_days']
 )
 
-st.session_state.setdefault("ocr_ready", False)
-st.session_state.setdefault("ocr_text", "")
 st.session_state.setdefault("authentication_status", None)
 
 cookie_token = authenticator.cookie_controller.get_cookie()
@@ -673,94 +671,15 @@ if auth_status:
 
     else:
         authenticator.logout('Logout', 'sidebar')
-        tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
 
-        with tab1:
-            st.title("V.I.C.T.O.R")
-            st.subheader(f"Upload your math steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
-            uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "png", "jpeg", "heic", "heif"])
+        topic_pages = [
+            st.Page(functools.partial(render_student_checker_page, topic), title=topic)
+            for topic in TOPICS
+        ]
+        history_page = st.Page(render_student_history_page, title="My Performance History")
 
-            if uploaded_file is not None:
-                current_file_name = uploaded_file.name
-                if st.session_state.get("last_uploaded_file") != current_file_name:
-                    st.session_state["last_uploaded_file"] = current_file_name
-                    st.session_state["ocr_text"] = ""
-                    st.session_state["ocr_ready"] = False
-
-                if st.button("Run OCR"):
-                    with st.spinner('Analyzing handwriting and verifying steps...'):
-                        try:
-                            file_extension = uploaded_file.name.split(".")[-1].lower()
-                            if file_extension in ["heic", "heif"]:
-                                heif_file = pillow_heif.read_heif(uploaded_file.getvalue())
-                                image = Image.frombytes(heif_file.mode, heif_file.size, heif_file.data, "raw", heif_file.mode, heif_file.stride)
-                                image.save("temp_image.png", format="PNG")
-                            else:
-                                with open("temp_image.png", "wb") as f:
-                                    f.write(uploaded_file.getvalue())
-
-                            st.session_state["ocr_text"] = clean_image("temp_image.png").strip()
-                            st.session_state["ocr_ready"] = True
-                        except Exception as e:
-                            st.error("The AI service is experiencing heavy traffic. Please try again.")
-
-                if st.session_state["ocr_ready"]:
-                    st.info("Review the OCR text below and fix any symbol mistakes before checking.")
-                    st.text_area("Extracted Steps:", key="ocr_text", height=240)
-
-                    if st.button("Confirm OCR and Check"):
-                        steps = [s.strip() for s in st.session_state["ocr_text"].splitlines() if s.strip()]
-                        if not steps:
-                            st.warning("Please review or correct the OCR text first.")
-                        else:
-                            result = detect_first_error(steps)
-                            status_str = "Passed" if result.passed else "Failed"
-                            
-                            if result.passed:
-                                st.success(f"Passed: {result.message}")
-                            else:
-                                st.error(f"Error found: {result.message}")
-
-                            msg_lower = result.message.lower()
-                            if "sign" in msg_lower: error_type_str = "Sign Error"
-                            elif "distrib" in msg_lower: error_type_str = "Distribution Error"
-                            elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
-                            elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
-                            else: error_type_str = "Conceptual/Other"
-
-                            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
-                            history_df = load_history_df()
-                            
-                            new_log = pd.DataFrame([{
-                                'username': username, 'date': timestamp, 'equation': "\n".join(steps),
-                                'status': status_str, 'message': result.message, 'error_type': error_type_str
-                            }])
-
-                            updated_history = pd.concat([history_df, new_log], ignore_index=True)
-                            save_dataframe_to_worksheet("History", updated_history, HISTORY_COLS)
-
-        with tab2:
-            st.title("Your Performance History")
-            history_df = load_history_df()
-            user_history_df = history_df[history_df["username"] == username]
-            render_analytics_panel(
-                "Your Individual Analytics",
-                user_history_df,
-                "You haven't scanned any math problems yet!"
-            )
-
-            st.markdown("---")
-            if user_history_df.empty:
-                st.info("You haven't scanned any math problems yet!")
-            else:
-                st.subheader("Recent Attempts")
-                for _, item in user_history_df.iloc[::-1].iterrows():
-                    render_history_card(
-                        date_text=str(item["date"]),
-                        steps_text=str(item["equation"]),
-                        message_text=str(item["message"]),
-                        passed=item["status"] == "Passed",
-                    )
+        current_page = st.navigation(topic_pages + [history_page])
+        current_page.run()
 
 elif auth_status is False:
     st.error('Username/password is incorrect')
