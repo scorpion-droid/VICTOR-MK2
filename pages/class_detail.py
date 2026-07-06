@@ -190,7 +190,7 @@ if not selected_code or selected_code not in teacher_classes:
         st.switch_page("app.py")
     st.stop()
 
-    history_df = load_history_df()
+history_df = load_history_df()
 student_accounts = {
     u: data for u, data in credentials["usernames"].items()
     if data.get("role") == "student" and data.get("class_code") == selected_code
