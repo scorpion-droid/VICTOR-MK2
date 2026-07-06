@@ -326,7 +326,7 @@ def render_login() -> None:
 auth_status = st.session_state.get("authentication_status")
 
 if auth_status:
-    authenticator.logout('Logout', 'sidebar')
+    authenticator.logout('Logout', 'sidebar', 'bottom')
     st.write(f'Welcome back, *{st.session_state["name"]}*!')
 
     username = st.session_state["username"]
