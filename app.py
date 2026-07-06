@@ -442,13 +442,13 @@ if auth_status:
                         with metric_cols[0]:
                             st.metric(label="Number of Students", value=total_students, delta_color="blue")
                         with metric_cols[1]:
-                            st.metric("Number of Uploads", total_uploads, color="orange")
+                            st.metric("Number of Uploads", total_uploads, delta_color="orange")
 
                         st.write("Students needing attention:")
                         if attention_names:
-                            st.write(", ".join(attention_names))
+                            st.write(f":red[{', '.join(attention_names)}]")
                         else:
-                            st.write("None so far.", color="green")
+                            st.write(":green[None so far.]")
 
                         st.write("Class Summary (AI):")
                         st.write(ai_summary)
