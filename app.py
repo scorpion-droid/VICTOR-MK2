@@ -354,10 +354,195 @@ def render_login() -> None:
             else:
                 raise
 
+def get_current_user_profile() -> dict:
+    current_username = st.session_state.get("username", "")
+    return credentials["usernames"].get(current_username, {})
+
+def render_teacher_dashboard() -> None:
+    global teacher_detail_page
+    st.title("Teacher Hub")
+
+    user_profile = get_current_user_profile()
+    teacher_classes = user_profile.get("classes", {})
+
+    with st.sidebar.expander("Create a New Class", expanded=False):
+        new_class_name = st.text_input("Class Name (e.g., Calculus Level 2):")
+        if st.button("Generate Class"):
+            if new_class_name.strip():
+                new_code = generate_class_code()
+                teacher_classes[new_code] = new_class_name.strip()
+                users_df = load_users_df()
+                users_df.loc[users_df["username"] == st.session_state.get("username", ""), "classes"] = json.dumps(teacher_classes)
+                save_dataframe_to_worksheet("Users", users_df, USER_COLS)
+                st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
+                st.rerun()
+            else:
+                st.error("Please enter a class name.")
+
+    with st.sidebar.expander("Delete an Existing Class", expanded=False):
+        if not teacher_classes:
+            st.caption("You don't have any classes to delete yet.")
+        else:
+            delete_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
+            class_to_delete_code = st.selectbox(
+                "Select Class to Permanently Delete:",
+                options=list(delete_options.keys()),
+                format_func=lambda x: delete_options[x],
+                key="delete_class_select",
+            )
+
+            confirm_delete = st.checkbox(
+                f"I understand this deletes all logs associated with code {class_to_delete_code}",
+                key="confirm_delete_chk",
+            )
+            if st.button("Permanently Delete Class", type="primary"):
+                if confirm_delete:
+                    deleted_class_name = teacher_classes[class_to_delete_code]
+                    teacher_classes.pop(class_to_delete_code, None)
+                    users_df = load_users_df()
+                    users_df.loc[users_df["username"] == st.session_state.get("username", ""), "classes"] = json.dumps(teacher_classes)
+                    save_dataframe_to_worksheet("Users", users_df, USER_COLS)
+                    st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
+                    st.rerun()
+                else:
+                    st.error("Please check the confirmation box before deleting.")
+
+    if "class_creation_success" in st.session_state:
+        st.success(st.session_state["class_creation_success"])
+        del st.session_state["class_creation_success"]
+
+    if "class_deletion_success" in st.session_state:
+        st.error(st.session_state["class_deletion_success"])
+        del st.session_state["class_deletion_success"]
+
+    if not teacher_classes:
+        st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
+        return
+
+    st.subheader("Your Classrooms")
+    st.caption("Click a classroom card to open its detailed view.")
+    history_df = load_history_df()
+    class_cols = st.columns(2)
+
+    for idx, (class_code, class_name) in enumerate(teacher_classes.items()):
+        with class_cols[idx % 2]:
+            class_data = get_teacher_class_summary(class_code, teacher_classes, credentials, history_df)
+            with st.container(border=True):
+                st.markdown(f"### {class_data['class_name']}")
+                st.caption(f"Class code: `{class_data['class_code']}`")
+
+                metric_cols = st.columns(2)
+                with metric_cols[0]:
+                    st.metric("# Students", class_data["total_students"])
+                with metric_cols[1]:
+                    st.metric("# Uploads", class_data["total_uploads"])
+
+                st.write("Students needing attention:")
+                if class_data["attention_names"]:
+                    st.write(", ".join(class_data["attention_names"]))
+                else:
+                    st.write("None so far.")
+
+                st.write("Class Summary (AI):")
+                st.write(class_data["ai_summary"])
+
+                if st.button("Open Class", key=f"open_class_{class_code}"):
+                    st.session_state["selected_class_code"] = class_code
+                    st.switch_page(teacher_detail_page)
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Logout", use_container_width=True):
+        st.session_state["authentication_status"] = False
+        for key in ("username", "name", "email", "roles"):
+            st.session_state.pop(key, None)
+        st.switch_page("app.py")
+
+def render_teacher_detail() -> None:
+    global teacher_dashboard_page
+    user_profile = get_current_user_profile()
+    teacher_classes = user_profile.get("classes", {})
+    selected_code = st.session_state.get("selected_class_code")
+
+    if not selected_code or selected_code not in teacher_classes:
+        st.warning("Pick a classroom from the teacher dashboard first.")
+        if st.button("Back to Dashboard"):
+            st.switch_page(teacher_dashboard_page)
+        st.stop()
+
+    history_df = load_history_df()
+    student_accounts = {
+        u: data for u, data in credentials["usernames"].items()
+        if data.get("role") == "student" and data.get("class_code") == selected_code
+    }
+    class_history_df = history_df[history_df["username"].isin(student_accounts.keys())] if not history_df.empty else pd.DataFrame(columns=HISTORY_COLS)
+
+    st.title(f"{teacher_classes[selected_code]} ({selected_code})")
+    st.caption("Detailed class view")
+
+    if st.button("Back to Dashboard"):
+        st.switch_page(teacher_dashboard_page)
+
+    view_choice = st.sidebar.radio("View", ["Overview", "Student Roster & Live Logs", "Concept Analysis"], index=0)
+
+    if view_choice == "Overview":
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("Students", len(student_accounts))
+        with c2:
+            st.metric("Uploads", len(class_history_df))
+
+        attention_names = []
+        for s_user, s_data in student_accounts.items():
+            s_history_df = class_history_df[class_history_df["username"] == s_user]
+            if not s_history_df.empty and (s_history_df["status"] == "Failed").sum() >= (s_history_df["status"] == "Passed").sum():
+                attention_names.append(s_data.get("first_name", s_user))
+
+        st.write("Students needing attention:")
+        st.write(", ".join(attention_names) if attention_names else "None so far.")
+
+        st.write("Class Summary (AI):")
+        if class_history_df.empty:
+            st.info("No uploads yet for this class.")
+        else:
+            total_passed = int((class_history_df["status"] == "Passed").sum())
+            total_failed = int((class_history_df["status"] == "Failed").sum())
+            st.success(f"{total_passed} passed, {total_failed} failed. {len(attention_names)} student(s) may need extra support.")
+
+    elif view_choice == "Student Roster & Live Logs":
+        if not student_accounts:
+            st.info("No students have entered this classroom code yet.")
+        else:
+            for s_user, s_data in student_accounts.items():
+                s_history_df = class_history_df[class_history_df["username"] == s_user]
+                with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
+                    if s_history_df.empty:
+                        st.caption("This student hasn't checked any equations yet.")
+                    else:
+                        for _, item in s_history_df.iloc[::-1].iterrows():
+                            render_history_card(
+                                date_text=str(item["date"]),
+                                steps_text=str(item["equation"]),
+                                message_text=str(item["message"]),
+                                passed=item["status"] == "Passed",
+                            )
+
+    else:
+        render_analytics_panel(
+            "Classroom Misconception Breakdown",
+            class_history_df,
+            "Zero student errors recorded in this section yet! Everything balances perfectly."
+        )
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("Logout", use_container_width=True):
+        st.session_state["authentication_status"] = False
+        for key in ("username", "name", "email", "roles"):
+            st.session_state.pop(key, None)
+        st.switch_page("app.py")
+
 auth_status = st.session_state.get("authentication_status")
 
 if auth_status:
-    authenticator.logout('Logout', 'sidebar')
     st.write(f'Welcome back, *{st.session_state["name"]}*!')
 
     username = st.session_state["username"]
@@ -365,99 +550,13 @@ if auth_status:
     user_role = user_profile.get('role', 'student')
 
     if user_role == "teacher":
-        st.title("Teacher Hub")
-        teacher_classes = user_profile.get('classes', {}) 
-
-        with st.sidebar.expander("Create a New Class", expanded=False):
-            new_class_name = st.text_input("Class Name (e.g., Calculus Level 2):")
-            if st.button("Generate Class"):
-                if new_class_name.strip():
-                    new_code = generate_class_code()
-                    
-                    teacher_classes[new_code] = new_class_name.strip()
-                    users_df = load_users_df()
-                    users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                    save_dataframe_to_worksheet("Users", users_df, USER_COLS)
-                    
-                    st.session_state["class_creation_success"] = f"Class '{new_class_name.strip()}' was successfully created! Enrollment Code: **{new_code}**"
-                    st.rerun()
-                else:
-                    st.error("Please enter a class name.")
-
-        with st.sidebar.expander("Delete an Existing Class", expanded=False):
-            if not teacher_classes:
-                st.caption("You don't have any classes to delete yet.")
-            else:
-                delete_options = {code: f"{name} ({code})" for code, name in teacher_classes.items()}
-                class_to_delete_code = st.selectbox(
-                    "Select Class to Permanently Delete:",
-                    options=list(delete_options.keys()),
-                    format_func=lambda x: delete_options[x],
-                    key="delete_class_select"
-                )
-
-                confirm_delete = st.checkbox(f"I understand this deletes all logs associated with code {class_to_delete_code}", key="confirm_delete_chk")
-                if st.button("Permanently Delete Class", type="primary"):
-                    if confirm_delete:
-                        deleted_class_name = teacher_classes[class_to_delete_code]
-                        teacher_classes.pop(class_to_delete_code, None)
-                        users_df = load_users_df()
-                        users_df.loc[users_df["username"] == username, "classes"] = json.dumps(teacher_classes)
-                        save_dataframe_to_worksheet("Users", users_df, USER_COLS)
-
-                        st.session_state["class_deletion_success"] = f"Class '{deleted_class_name}' was successfully permanently deleted."
-                        st.rerun()
-                    else:
-                        st.error("Please check the confirmation box before deleting.")
-
-        if "class_creation_success" in st.session_state:
-            st.success(st.session_state["class_creation_success"])
-            del st.session_state["class_creation_success"]
-
-        if "class_deletion_success" in st.session_state:
-            st.error(st.session_state["class_deletion_success"])
-            del st.session_state["class_deletion_success"]
-
-        if not teacher_classes:
-            st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
-        else:
-            st.subheader("Your Classrooms")
-            st.caption("Click a classroom card to open its detailed view.")
-            history_df = load_history_df()
-
-            class_cols = st.columns(2)
-
-            for idx, (class_code, class_name) in enumerate(teacher_classes.items()):
-                with class_cols[idx % 2]:
-                    class_data = get_teacher_class_summary(class_code, teacher_classes, credentials, history_df)
-                    total_students = class_data["total_students"]
-                    total_uploads = class_data["total_uploads"]
-                    attention_names = class_data["attention_names"]
-                    ai_summary = class_data["ai_summary"]
-
-                    with st.container(border=True):
-                        st.markdown(f"### {class_name}")
-                        st.caption(f"Class code: `{class_code}`")
-                        metric_cols = st.columns(2)
-                        with metric_cols[0]:
-                            st.metric(label="Number of Students", value=total_students, delta_color="blue")
-                        with metric_cols[1]:
-                            st.metric("Number of Uploads", total_uploads, delta_color="orange")
-
-                        st.write("Students needing attention:")
-                        if attention_names:
-                            st.write(f":red[{', '.join(attention_names)}]")
-                        else:
-                            st.write(":green[None so far.]")
-
-                        st.write("Class Summary (AI):")
-                        st.write(ai_summary)
-
-                        if st.button("Open Class", key=f"open_class_{class_code}"):
-                            st.session_state["selected_class_code"] = class_code
-                            st.switch_page("pages/class_detail.py")
+        teacher_dashboard_page = st.Page(render_teacher_dashboard, title="Teacher Dashboard")
+        teacher_detail_page = st.Page(render_teacher_detail, title="Class Detail")
+        current_page = st.navigation([teacher_dashboard_page, teacher_detail_page], position="hidden")
+        current_page.run()
 
     else:
+        authenticator.logout('Logout', 'sidebar')
         tab1, tab2 = st.tabs(["V.I.C.T.O.R Checker", "My Performance History"])
 
         with tab1:
