@@ -673,10 +673,10 @@ if auth_status:
         authenticator.logout('Logout', 'sidebar')
 
         topic_pages = [
-            st.Page(functools.partial(render_student_checker_page, topic), title=topic)
+            st.Page(functools.partial(render_student_checker_page, topic), title=topic, url_path=_topic_slug(topic))
             for topic in TOPICS
         ]
-        history_page = st.Page(render_student_history_page, title="My Performance History")
+        history_page = st.Page(render_student_history_page, title="My Performance History", url_path="history")
 
         current_page = st.navigation(topic_pages + [history_page])
         current_page.run()
