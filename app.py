@@ -439,9 +439,9 @@ def render_teacher_dashboard() -> None:
 
                 st.write("Students needing attention:")
                 if class_data["attention_names"]:
-                    st.write(", ".join(class_data["attention_names"]))
+                    st.write(f":red[{', '.join(class_data['attention_names'])}]")
                 else:
-                    st.write("None so far.")
+                    st.write(":green[None so far.]")
 
                 st.write("Class Summary (AI):")
                 st.write(class_data["ai_summary"])
