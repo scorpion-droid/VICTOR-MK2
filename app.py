@@ -168,6 +168,19 @@ def summarize_history(history_df: pd.DataFrame) -> dict:
             summary[value] += 1
     return summary
 
+def summarize_topic_counts(history_df: pd.DataFrame) -> pd.DataFrame:
+    if history_df.empty or "topic" not in history_df.columns:
+        return pd.DataFrame(columns=["Passed", "Failed"])
+
+    working_df = history_df.copy()
+    working_df["topic"] = working_df["topic"].fillna("Unspecified").replace("", "Unspecified")
+
+    counts = working_df.groupby(["topic", "status"]).size().unstack(fill_value=0)
+    for col in ("Passed", "Failed"):
+        if col not in counts.columns:
+            counts[col] = 0
+    return counts[["Passed", "Failed"]]
+
 def render_analytics_panel(title: str, history_df: pd.DataFrame, empty_message: str) -> None:
     st.subheader(title)
     if history_df.empty:
@@ -626,8 +639,15 @@ def render_teacher_detail() -> None:
         if not student_accounts:
             st.info("No students have entered this classroom code yet.")
         else:
+            roster_topic_filter = st.selectbox(
+                "Filter submissions by topic",
+                ["All Topics"] + TOPICS,
+                key="roster_topic_filter",
+            )
             for s_user, s_data in student_accounts.items():
                 s_history_df = class_history_df[class_history_df["username"] == s_user]
+                if roster_topic_filter != "All Topics" and "topic" in s_history_df.columns:
+                    s_history_df = s_history_df[s_history_df["topic"] == roster_topic_filter]
                 with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
                     if s_history_df.empty:
                         st.caption("This student hasn't checked any equations yet.")
@@ -638,13 +658,32 @@ def render_teacher_detail() -> None:
                                 steps_text=str(item["equation"]),
                                 message_text=str(item["message"]),
                                 passed=item["status"] == "Passed",
+                                header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
                             )
 
     else:
+        st.subheader("Submissions by Topic")
+        topic_counts_df = summarize_topic_counts(class_history_df)
+        if topic_counts_df.empty:
+            st.info("No submissions yet to break down by topic.")
+        else:
+            st.bar_chart(topic_counts_df)
+
+        st.markdown("---")
+        concept_topic_filter = st.selectbox(
+            "Focus the misconception breakdown on a topic",
+            ["All Topics"] + TOPICS,
+            key="concept_topic_filter",
+        )
+        if concept_topic_filter != "All Topics" and "topic" in class_history_df.columns:
+            topic_filtered_df = class_history_df[class_history_df["topic"] == concept_topic_filter]
+        else:
+            topic_filtered_df = class_history_df
+
         render_analytics_panel(
-            "Classroom Misconception Breakdown",
-            class_history_df,
-            "Zero student errors recorded in this section yet! Everything balances perfectly."
+            f"Classroom Misconception Breakdown — {concept_topic_filter}",
+            topic_filtered_df,
+            "Zero student errors recorded for this topic yet."
         )
 
     st.sidebar.markdown("---")
