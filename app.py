@@ -432,15 +432,15 @@ def render_student_checker_page(topic: str) -> None:
 
                     if result.passed:
                         st.success(f"Passed: {result.message}")
+                        error_type_str = "N/A"
                     else:
                         st.error(f"Error found: {result.message}")
-
-                    msg_lower = result.message.lower()
-                    if "sign" in msg_lower: error_type_str = "Sign Error"
-                    elif "distrib" in msg_lower: error_type_str = "Distribution Error"
-                    elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
-                    elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
-                    else: error_type_str = "Conceptual/Other"
+                        msg_lower = result.message.lower()
+                        if "sign" in msg_lower: error_type_str = "Sign Error"
+                        elif "distrib" in msg_lower: error_type_str = "Distribution Error"
+                        elif "arithmetic" in msg_lower or "calculat" in msg_lower: error_type_str = "Arithmetic Error"
+                        elif "variable" in msg_lower or "drop" in msg_lower: error_type_str = "Variable Mismatch"
+                        else: error_type_str = "Conceptual/Other"
 
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                     history_df = load_history_df()
