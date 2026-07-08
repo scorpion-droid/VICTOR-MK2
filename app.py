@@ -444,9 +444,10 @@ def render_student_checker_page(topic: str) -> None:
 
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                     history_df = load_history_df()
+                    numbered_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
 
                     new_log = pd.DataFrame([{
-                        'username': username, 'date': timestamp, 'equation': "\n".join(steps),
+                        'username': username, 'date': timestamp, 'equation': numbered_steps,
                         'status': status_str, 'message': result.message, 'error_type': error_type_str,
                         'topic': topic,
                     }])
@@ -575,6 +576,7 @@ def render_teacher_dashboard() -> None:
 
                 if st.button("Open Class", key=f"open_class_{class_code}"):
                     st.session_state["selected_class_code"] = class_code
+                    st.session_state.pop("selected_student_username", None)
                     st.switch_page(teacher_detail_page)
 
     st.sidebar.markdown("---")
@@ -583,6 +585,48 @@ def render_teacher_dashboard() -> None:
         for key in ("username", "name", "email", "roles"):
             st.session_state.pop(key, None)
         st.switch_page("app.py")
+
+def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_df: pd.DataFrame) -> None:
+    student_name = f"{s_data.get('first_name', s_user)} {s_data.get('last_name', '')}".strip()
+
+    if st.button("← Back to Roster", key=f"back_to_roster_{s_user}"):
+        st.session_state.pop("selected_student_username", None)
+        st.rerun()
+
+    st.subheader(f"{student_name}'s Performance History")
+    st.caption(f"@{s_user}")
+
+    s_history_df = class_history_df[class_history_df["username"] == s_user]
+
+    topic_filter = st.selectbox(
+        "Filter by topic",
+        ["All Topics"] + TOPICS,
+        key=f"student_detail_topic_filter_{s_user}",
+    )
+    if topic_filter != "All Topics" and "topic" in s_history_df.columns:
+        filtered_df = s_history_df[s_history_df["topic"] == topic_filter]
+    else:
+        filtered_df = s_history_df
+
+    render_analytics_panel(
+        "Individual Analytics",
+        filtered_df,
+        f"{student_name} hasn't scanned any math problems yet."
+    )
+
+    st.markdown("---")
+    if filtered_df.empty:
+        st.info(f"{student_name} hasn't scanned any math problems yet.")
+    else:
+        st.subheader("Recent Attempts")
+        for _, item in filtered_df.iloc[::-1].iterrows():
+            render_history_card(
+                date_text=str(item["date"]),
+                steps_text=str(item["equation"]),
+                message_text=str(item["message"]),
+                passed=item["status"] == "Passed",
+                header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
+            )
 
 def render_teacher_detail() -> None:
     global teacher_dashboard_page
@@ -639,27 +683,30 @@ def render_teacher_detail() -> None:
         if not student_accounts:
             st.info("No students have entered this classroom code yet.")
         else:
-            roster_topic_filter = st.selectbox(
-                "Filter submissions by topic",
-                ["All Topics"] + TOPICS,
-                key="roster_topic_filter",
-            )
-            for s_user, s_data in student_accounts.items():
-                s_history_df = class_history_df[class_history_df["username"] == s_user]
-                if roster_topic_filter != "All Topics" and "topic" in s_history_df.columns:
-                    s_history_df = s_history_df[s_history_df["topic"] == roster_topic_filter]
-                with st.expander(f"{s_data['first_name']} (@{s_user}) — {len(s_history_df)} submissions"):
-                    if s_history_df.empty:
-                        st.caption("This student hasn't checked any equations yet.")
-                    else:
-                        for _, item in s_history_df.iloc[::-1].iterrows():
-                            render_history_card(
-                                date_text=str(item["date"]),
-                                steps_text=str(item["equation"]),
-                                message_text=str(item["message"]),
-                                passed=item["status"] == "Passed",
-                                header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
-                            )
+            selected_student = st.session_state.get("selected_student_username")
+
+            if selected_student and selected_student in student_accounts:
+                render_student_detail_for_teacher(selected_student, student_accounts[selected_student], class_history_df)
+            else:
+                roster_topic_filter = st.selectbox(
+                    "Filter submissions by topic",
+                    ["All Topics"] + TOPICS,
+                    key="roster_topic_filter",
+                )
+                st.caption("Click a student to view their full history.")
+                for s_user, s_data in student_accounts.items():
+                    s_history_df = class_history_df[class_history_df["username"] == s_user]
+                    if roster_topic_filter != "All Topics" and "topic" in s_history_df.columns:
+                        s_history_df = s_history_df[s_history_df["topic"] == roster_topic_filter]
+
+                    student_name = f"{s_data.get('first_name', s_user)} {s_data.get('last_name', '')}".strip()
+                    col_name, col_count = st.columns([4, 1])
+                    with col_name:
+                        if st.button(f"{student_name} (@{s_user})", key=f"open_student_{s_user}", use_container_width=True):
+                            st.session_state["selected_student_username"] = s_user
+                            st.rerun()
+                    with col_count:
+                        st.caption(f"{len(s_history_df)} submissions")
 
     else:
         st.subheader("Submissions by Topic")
