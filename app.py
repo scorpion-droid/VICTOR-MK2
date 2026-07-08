@@ -655,6 +655,9 @@ def render_teacher_detail() -> None:
 
     view_choice = st.sidebar.radio("View", ["Overview", "Student Roster & Live Logs", "Concept Analysis"], index=0)
 
+    if view_choice != "Student Roster & Live Logs":
+        st.session_state.pop("selected_student_username", None)
+
     if view_choice == "Overview":
         c1, c2 = st.columns(2)
         with c1:
