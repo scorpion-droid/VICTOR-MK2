@@ -1,1 +1,2 @@
-This project is useable by anyone who requires it. 
+# V.I.C.T.O.R.
+# Virtual Intelligence Checking Theories, Operations, and Results
