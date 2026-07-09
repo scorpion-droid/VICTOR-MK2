@@ -117,30 +117,40 @@ DEFAULT_TOPICS = [
     "Inequalities",
 ]
 
-def load_topics() -> list[str]:
+def load_topics(class_code: str) -> list[str]:
+    class_code = (class_code or "").strip().lower()
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
             worksheet = sh.worksheet("Topics")
             records = worksheet.get_all_records()
-            topics = [str(r.get("topic", "")).strip() for r in records if str(r.get("topic", "")).strip()]
         else:
             topics_df = conn.read(worksheet="Topics", ttl=0)
-            topics = [str(t).strip() for t in topics_df.get("topic", pd.Series(dtype=str)).tolist() if str(t).strip()]
+            records = topics_df.to_dict("records")
+        topics = [
+            str(r.get("topic", "")).strip()
+            for r in records
+            if str(r.get("class_code", "")).strip().lower() == class_code and str(r.get("topic", "")).strip()
+        ]
         return topics if topics else DEFAULT_TOPICS
     except Exception:
         return DEFAULT_TOPICS
 
-def add_topic(new_topic: str) -> bool:
-    existing_topics = load_topics()
+def add_topic(class_code: str, new_topic: str) -> bool:
+    class_code = (class_code or "").strip().lower()
+    existing_topics = load_topics(class_code)
     if new_topic.strip().lower() in [t.lower() for t in existing_topics]:
-        st.warning(f"'{new_topic}' already exists as a topic.")
+        st.warning(f"'{new_topic}' already exists as a topic for this class.")
         return False
     new_slug = _topic_slug(new_topic)
     if new_slug in [_topic_slug(t) for t in existing_topics]:
         st.warning(f"'{new_topic}' is too similar to an existing topic name. Try a more distinct name.")
         return False
-    return save_dataframe_to_worksheet("Topics", pd.DataFrame({"topic": [new_topic.strip()]}), ["topic"])
+    return save_dataframe_to_worksheet(
+        "Topics",
+        pd.DataFrame({"class_code": [class_code], "topic": [new_topic.strip()]}),
+        ["class_code", "topic"],
+    )
 
 ERROR_BUCKETS = [
     "Sign Error",
@@ -492,7 +502,7 @@ def render_student_history_page() -> None:
     history_df = load_history_df()
     user_history_df = history_df[history_df["username"] == username]
 
-    topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(), key="history_topic_filter")
+    topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(user_profile.get("class_code", "")), key="history_topic_filter")
     if topic_filter != "All Topics" and "topic" in user_history_df.columns:
         filtered_df = user_history_df[user_history_df["topic"] == topic_filter]
     else:
@@ -618,7 +628,7 @@ def render_teacher_dashboard() -> None:
             st.session_state.pop(key, None)
         st.switch_page("app.py")
 
-def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_df: pd.DataFrame) -> None:
+def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_df: pd.DataFrame, class_code: str) -> None:
     student_name = f"{s_data.get('first_name', s_user)} {s_data.get('last_name', '')}".strip()
 
     if st.button("← Back to Roster", key=f"back_to_roster_{s_user}"):
@@ -632,7 +642,7 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
 
     topic_filter = st.selectbox(
         "Filter by topic",
-        ["All Topics"] + load_topics(),
+        ["All Topics"] + load_topics(class_code),
         key=f"student_detail_topic_filter_{s_user}",
     )
     if topic_filter != "All Topics" and "topic" in s_history_df.columns:
@@ -721,11 +731,11 @@ def render_teacher_detail() -> None:
             selected_student = st.session_state.get("selected_student_username")
 
             if selected_student and selected_student in student_accounts:
-                render_student_detail_for_teacher(selected_student, student_accounts[selected_student], class_history_df)
+                render_student_detail_for_teacher(selected_student, student_accounts[selected_student], class_history_df, selected_code)
             else:
                 roster_topic_filter = st.selectbox(
                     "Filter submissions by topic",
-                    ["All Topics"] + load_topics(),
+                    ["All Topics"] + load_topics(selected_code),
                     key="roster_topic_filter",
                 )
                 st.caption("Click a student to view their full history.")
@@ -745,13 +755,14 @@ def render_teacher_detail() -> None:
 
     else:
         with st.expander("➕ Add a new topic"):
+            st.caption(f"This topic will only be added for {teacher_classes.get(selected_code, selected_code)} — not your other classes.")
             new_topic_input = st.text_input("New topic name", key="new_topic_input")
             if st.button("Add Topic", key="add_topic_button"):
                 cleaned_topic = new_topic_input.strip()
                 if not cleaned_topic:
                     st.warning("Enter a topic name first.")
-                elif add_topic(cleaned_topic):
-                    st.success(f"'{cleaned_topic}' added. It will now appear as an upload page for every student.")
+                elif add_topic(selected_code, cleaned_topic):
+                    st.success(f"'{cleaned_topic}' added. It will now appear as an upload page for students in this class.")
                     st.rerun()
 
         st.subheader("Submissions by Topic")
@@ -764,7 +775,7 @@ def render_teacher_detail() -> None:
         st.markdown("---")
         concept_topic_filter = st.selectbox(
             "Focus the misconception breakdown on a topic",
-            ["All Topics"] + load_topics(),
+            ["All Topics"] + load_topics(selected_code),
             key="concept_topic_filter",
         )
         if concept_topic_filter != "All Topics" and "topic" in class_history_df.columns:
@@ -817,7 +828,7 @@ if auth_status:
 
         topic_pages = [
             st.Page(functools.partial(render_student_checker_page, topic), title=topic, url_path=_topic_slug(topic))
-            for topic in load_topics()
+            for topic in load_topics(user_profile.get("class_code", ""))
         ]
         history_page = st.Page(render_student_history_page, title="My Performance History", url_path="history")
 
