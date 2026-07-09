@@ -109,13 +109,38 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
 USER_COLS = ["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"]
 HISTORY_COLS = ["username", "date", "equation", "status", "message", "error_type", "topic"]
 
-TOPICS = [
+DEFAULT_TOPICS = [
     "Linear Equations",
     "Factorization",
     "Systems of Equations",
     "Area & Volume",
     "Inequalities",
 ]
+
+def load_topics() -> list[str]:
+    try:
+        if gc and SPREADSHEET_ID:
+            sh = gc.open_by_key(SPREADSHEET_ID)
+            worksheet = sh.worksheet("Topics")
+            records = worksheet.get_all_records()
+            topics = [str(r.get("topic", "")).strip() for r in records if str(r.get("topic", "")).strip()]
+        else:
+            topics_df = conn.read(worksheet="Topics", ttl=0)
+            topics = [str(t).strip() for t in topics_df.get("topic", pd.Series(dtype=str)).tolist() if str(t).strip()]
+        return topics if topics else DEFAULT_TOPICS
+    except Exception:
+        return DEFAULT_TOPICS
+
+def add_topic(new_topic: str) -> bool:
+    existing_topics = load_topics()
+    if new_topic.strip().lower() in [t.lower() for t in existing_topics]:
+        st.warning(f"'{new_topic}' already exists as a topic.")
+        return False
+    new_slug = _topic_slug(new_topic)
+    if new_slug in [_topic_slug(t) for t in existing_topics]:
+        st.warning(f"'{new_topic}' is too similar to an existing topic name. Try a more distinct name.")
+        return False
+    return save_dataframe_to_worksheet("Topics", pd.DataFrame({"topic": [new_topic.strip()]}), ["topic"])
 
 ERROR_BUCKETS = [
     "Sign Error",
@@ -376,7 +401,14 @@ def render_login() -> None:
 
 def get_current_user_profile() -> dict:
     current_username = st.session_state.get("username", "")
-    return credentials["usernames"].get(current_username, {})
+    profile = credentials["usernames"].get(current_username, {})
+    if profile:
+        st.session_state["last_known_profile"] = profile
+        return profile
+    # Live read for this rerun didn't include this user (transient sheet
+    # issue) — reuse the last profile we actually confirmed rather than
+    # silently showing an empty one.
+    return st.session_state.get("last_known_profile", {})
 
 def _topic_slug(topic: str) -> str:
     return topic.lower().replace(" ", "_").replace("&", "and")
@@ -460,7 +492,7 @@ def render_student_history_page() -> None:
     history_df = load_history_df()
     user_history_df = history_df[history_df["username"] == username]
 
-    topic_filter = st.selectbox("Filter by topic", ["All Topics"] + TOPICS, key="history_topic_filter")
+    topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(), key="history_topic_filter")
     if topic_filter != "All Topics" and "topic" in user_history_df.columns:
         filtered_df = user_history_df[user_history_df["topic"] == topic_filter]
     else:
@@ -600,7 +632,7 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
 
     topic_filter = st.selectbox(
         "Filter by topic",
-        ["All Topics"] + TOPICS,
+        ["All Topics"] + load_topics(),
         key=f"student_detail_topic_filter_{s_user}",
     )
     if topic_filter != "All Topics" and "topic" in s_history_df.columns:
@@ -693,7 +725,7 @@ def render_teacher_detail() -> None:
             else:
                 roster_topic_filter = st.selectbox(
                     "Filter submissions by topic",
-                    ["All Topics"] + TOPICS,
+                    ["All Topics"] + load_topics(),
                     key="roster_topic_filter",
                 )
                 st.caption("Click a student to view their full history.")
@@ -712,6 +744,16 @@ def render_teacher_detail() -> None:
                         st.caption(f"{len(s_history_df)} submissions")
 
     else:
+        with st.expander("➕ Add a new topic"):
+            new_topic_input = st.text_input("New topic name", key="new_topic_input")
+            if st.button("Add Topic", key="add_topic_button"):
+                cleaned_topic = new_topic_input.strip()
+                if not cleaned_topic:
+                    st.warning("Enter a topic name first.")
+                elif add_topic(cleaned_topic):
+                    st.success(f"'{cleaned_topic}' added. It will now appear as an upload page for every student.")
+                    st.rerun()
+
         st.subheader("Submissions by Topic")
         topic_counts_df = summarize_topic_counts(class_history_df)
         if topic_counts_df.empty:
@@ -722,7 +764,7 @@ def render_teacher_detail() -> None:
         st.markdown("---")
         concept_topic_filter = st.selectbox(
             "Focus the misconception breakdown on a topic",
-            ["All Topics"] + TOPICS,
+            ["All Topics"] + load_topics(),
             key="concept_topic_filter",
         )
         if concept_topic_filter != "All Topics" and "topic" in class_history_df.columns:
@@ -750,7 +792,19 @@ if auth_status:
 
     username = st.session_state["username"]
     user_profile = credentials["usernames"].get(username, {})
-    user_role = user_profile.get('role', 'student')
+
+    if user_profile:
+        # Genuine profile found in this rerun's credentials read — trust it,
+        # and remember it in case a future rerun's read is transiently empty.
+        user_role = user_profile.get('role', 'student')
+        st.session_state["roles"] = user_role
+    else:
+        # The live Users-sheet read for this rerun came back without this
+        # user (e.g. a transient Google Sheets error/rate limit — see
+        # load_users_df's exception fallback). Do NOT silently treat an
+        # already-authenticated user as a brand-new student in that case;
+        # fall back to whatever role we last confirmed for this session.
+        user_role = st.session_state.get("roles", "student")
 
     if user_role == "teacher":
         teacher_dashboard_page = st.Page(render_teacher_dashboard, title="Teacher Dashboard")
@@ -763,7 +817,7 @@ if auth_status:
 
         topic_pages = [
             st.Page(functools.partial(render_student_checker_page, topic), title=topic, url_path=_topic_slug(topic))
-            for topic in TOPICS
+            for topic in load_topics()
         ]
         history_page = st.Page(render_student_history_page, title="My Performance History", url_path="history")
 
