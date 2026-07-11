@@ -562,14 +562,11 @@ def filter_history_by_status(history_df: pd.DataFrame, status_filter: str) -> pd
         return history_df[history_df["status"] == "Failed"]
     return history_df.copy()
 
-def build_topic_trend_df(history_df: pd.DataFrame, topic_filter: str, status_filter: str = "All") -> pd.DataFrame:
+def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "All") -> pd.DataFrame:
     if history_df.empty:
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
 
     working_df = history_df.copy()
-    if "topic" in working_df.columns and topic_filter != "All Topics":
-        working_df = working_df[working_df["topic"].fillna("").astype(str).str.strip().str.lower() == topic_filter.strip().lower()]
-
     working_df = filter_history_by_status(working_df, status_filter)
     if working_df.empty:
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
@@ -583,7 +580,22 @@ def build_topic_trend_df(history_df: pd.DataFrame, topic_filter: str, status_fil
     working_df["passed"] = (working_df["status"] == "Passed").astype(int)
     working_df["attempt_index"] = range(1, len(working_df) + 1)
     working_df["cumulative_pass_rate"] = working_df["passed"].expanding().mean() * 100
-    return working_df[["attempt_index", "cumulative_pass_rate", "passed", "status", "date", "topic"] if "topic" in working_df.columns else ["attempt_index", "cumulative_pass_rate", "passed", "status", "date"]]
+    base_cols = ["attempt_index", "cumulative_pass_rate", "passed", "status", "date"]
+    if "topic" in working_df.columns:
+        base_cols.append("topic")
+    if "username" in working_df.columns:
+        base_cols.append("username")
+    return working_df[base_cols]
+
+def build_topic_trend_df(history_df: pd.DataFrame, topic_filter: str, status_filter: str = "All") -> pd.DataFrame:
+    if history_df.empty:
+        return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
+
+    working_df = history_df.copy()
+    if "topic" in working_df.columns and topic_filter != "All Topics":
+        working_df = working_df[working_df["topic"].fillna("").astype(str).str.strip().str.lower() == topic_filter.strip().lower()]
+
+    return build_cumulative_trend_df(working_df, status_filter)
 
 def get_gemini_client():
     api_key = os.environ.get("GEMINI_API_KEY")
@@ -635,6 +647,18 @@ def get_growth_prediction(history_df: pd.DataFrame, topic_filter: str, status_fi
         return response.text.strip()
     except Exception:
         return f"This student looks steady in {topic_filter}, but there isn't enough stable trend data for a strong prediction yet."
+
+def render_trend_and_prediction(title: str, history_df: pd.DataFrame, topic_filter: str = "All Topics", status_filter: str = "All") -> None:
+    st.subheader(title)
+    trend_df = build_topic_trend_df(history_df, topic_filter, status_filter)
+    if trend_df.empty:
+        st.info("Not enough submissions yet to draw a trend.")
+        return
+
+    chart_df = trend_df.set_index("attempt_index")[["cumulative_pass_rate"]]
+    st.line_chart(chart_df)
+    st.caption("Cumulative pass rate across the selected slice of submissions.")
+    st.info(get_growth_prediction(history_df, topic_filter, status_filter))
 
 def render_analytics_panel(title: str, history_df: pd.DataFrame, empty_message: str) -> None:
     st.subheader(title)
@@ -996,6 +1020,9 @@ def render_student_history_page() -> None:
                 passed=item["status"] == "Passed",
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
+
+    st.markdown("---")
+    render_trend_and_prediction(f"{student_name} Growth Trend", filtered_df, "All Topics", "All")
 
 def render_assignment_card(assignment: pd.Series, assignment_type: str, completion_map: dict[tuple[str, str], dict]) -> None:
     assignment_id = str(assignment.get("assignment_id", "")).strip()
@@ -1470,6 +1497,9 @@ def render_teacher_detail() -> None:
         else:
             st.write("No open work right now.")
 
+        st.markdown("---")
+        render_trend_and_prediction("Class-Wide Growth Trend", display_class_history_df, "All Topics", status_filter)
+
     elif view_choice == "Student Roster & Live Logs":
         if not student_accounts:
             st.info("No students have entered this classroom code yet.")
@@ -1532,17 +1562,8 @@ def render_teacher_detail() -> None:
         else:
             topic_filtered_df = display_class_history_df
 
-        trend_df = build_topic_trend_df(display_class_history_df, concept_topic_filter, status_filter)
-        st.subheader("Progress Over Time")
-        if trend_df.empty:
-            st.info("Not enough submissions yet to draw a trend.")
-        else:
-            trend_chart_df = trend_df.set_index("attempt_index")[["cumulative_pass_rate"]]
-            st.line_chart(trend_chart_df)
-            st.caption("Cumulative pass rate across recent submissions.")
-
-        st.subheader("AI Mastery Prediction")
-        st.info(get_growth_prediction(display_class_history_df, concept_topic_filter, status_filter))
+        st.markdown("---")
+        render_trend_and_prediction(f"Topic Growth Trend — {concept_topic_filter}", display_class_history_df, concept_topic_filter, status_filter)
 
         render_analytics_panel(
             f"Classroom Misconception Breakdown — {concept_topic_filter}",
