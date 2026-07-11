@@ -572,8 +572,9 @@ def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "Al
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
 
     if "date" in working_df.columns:
-        working_df["parsed_date"] = pd.to_datetime(working_df["date"], errors="coerce")
-        working_df = working_df.sort_values(["parsed_date", "date"])
+        date_series = working_df["date"].fillna("").astype(str).str.strip()
+        working_df["parsed_date"] = pd.to_datetime(date_series, errors="coerce")
+        working_df = working_df.sort_values(["parsed_date"], kind="stable")
     else:
         working_df = working_df.reset_index(drop=True)
 
@@ -717,20 +718,17 @@ def get_teacher_class_summary(class_code: str, teacher_classes: dict, credential
         if data.get("role") == "student" and data.get("class_code") == class_code
     }
     class_history_df = filter_history_for_class(history_df, class_code, list(student_accounts.keys()))
-    attention_names = [
-        data.get("first_name", u)
-        for u, data in student_accounts.items()
-        if not class_history_df.empty and not class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Passed")].empty
-        and class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Failed")].shape[0] >= class_history_df[(class_history_df["username"] == u) & (class_history_df["status"] == "Passed")].shape[0]
-    ]
+    attention_names = []
+    if not class_history_df.empty:
+        activity_counts = class_history_df["username"].value_counts()
+        for u in activity_counts.index[:3]:
+            attention_names.append(student_accounts.get(u, {}).get("first_name", u))
     if class_history_df.empty:
         total_uploads = 0
         ai_summary = "No uploads yet for this class."
     else:
         total_uploads = len(class_history_df)
-        total_passed = int((class_history_df["status"] == "Passed").sum())
-        total_failed = int((class_history_df["status"] == "Failed").sum())
-        ai_summary = f"{total_passed} passed, {total_failed} failed. {len(attention_names)} student(s) may need extra support."
+        ai_summary = f"{total_uploads} total submissions logged. {len(attention_names)} student(s) may need extra support."
     return {
         "class_name": class_name,
         "class_code": class_code,
@@ -1231,12 +1229,17 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
         st.caption("Leave feedback to the whole class or to one student individually.")
         with st.form(f"teacher_comment_form_{selected_code}", clear_on_submit=True):
             comment_scope = st.radio("Comment scope", ["Class", "Individual Student"], horizontal=True, key=f"comment_scope_{selected_code}")
-            if comment_scope == "Individual Student" and student_options:
-                comment_student = st.selectbox("Student", student_options, format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x)
-            elif comment_scope == "Individual Student":
-                st.info("No students are in this class yet, so individual comments are unavailable for now.")
-                comment_student = ""
+            if student_options:
+                comment_student = st.selectbox(
+                    "Choose student",
+                    student_options,
+                    format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x,
+                    key=f"comment_student_{selected_code}",
+                    disabled=comment_scope != "Individual Student",
+                    help="Pick a student when you want the comment to appear only for them.",
+                )
             else:
+                st.info("No students are in this class yet, so individual comments are unavailable for now.")
                 comment_student = ""
             comment_topic = st.selectbox("Topic (optional)", topic_options, key=f"comment_topic_{selected_code}")
             comment_message = st.text_area("Comment")
@@ -1252,7 +1255,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "comment_id": make_record_id("comment"),
                     "class_code": selected_code,
                     "scope": "student" if comment_scope == "Individual Student" else "class",
-                    "username": comment_student if comment_scope == "Individual Student" else "",
+                    "username": comment_student if (comment_scope == "Individual Student" and student_options) else "",
                     "topic": "" if comment_topic == "No topic" else comment_topic,
                     "message": comment_message.strip(),
                     "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
@@ -1284,7 +1287,6 @@ def render_teacher_dashboard() -> None:
 
     user_profile = get_current_user_profile()
     teacher_classes = user_profile.get("classes", {})
-    status_filter = st.sidebar.radio("Show submissions", ["All", "Passed", "Failed"], index=0, key="teacher_dashboard_status_filter")
 
     with st.sidebar.expander("Create a New Class", expanded=False):
         new_class_name = st.text_input("Class Name (e.g., Calculus Level 2):")
@@ -1341,14 +1343,13 @@ def render_teacher_dashboard() -> None:
         return
 
     st.subheader("Your Classrooms")
-    st.caption(f"Click a classroom card to open its detailed view. Showing: {status_filter.lower() if status_filter != 'All' else 'all'} submissions.")
+    st.caption("Click a classroom card to open its detailed view.")
     history_df = load_history_df()
-    filtered_history_df = filter_history_by_status(history_df, status_filter)
     class_cols = st.columns(2)
 
     for idx, (class_code, class_name) in enumerate(teacher_classes.items()):
         with class_cols[idx % 2]:
-            class_data = get_teacher_class_summary(class_code, teacher_classes, credentials, filtered_history_df)
+            class_data = get_teacher_class_summary(class_code, teacher_classes, credentials, history_df)
             assignment_summary = get_class_assignment_summary(class_code, class_data["student_accounts"])
             with st.container(border=True):
                 st.markdown(f"### {class_data['class_name']}")
@@ -1364,7 +1365,7 @@ def render_teacher_dashboard() -> None:
                 with metric_cols[3]:
                     st.metric("Pending", assignment_summary["pending_student_count"])
 
-                st.write("Students needing attention:")
+                st.write("Recently active students:")
                 if class_data["attention_names"]:
                     st.write(f":red[{', '.join(class_data['attention_names'])}]")
                 else:
@@ -1406,22 +1407,31 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
     st.caption(f"@{s_user}")
 
     s_history_df = class_history_df[class_history_df["username"] == s_user]
+    status_filter = st.radio("Show submissions", ["All", "Passed", "Failed"], horizontal=True, key=f"student_detail_status_filter_{s_user}")
 
     topic_filter = st.selectbox(
         "Filter by topic",
         ["All Topics"] + load_topics(class_code),
         key=f"student_detail_topic_filter_{s_user}",
     )
-    if topic_filter != "All Topics" and "topic" in s_history_df.columns:
-        filtered_df = s_history_df[s_history_df["topic"].str.strip().str.lower() == topic_filter.strip().lower()]
-    else:
-        filtered_df = s_history_df
+    filtered_df = filter_history_by_status(s_history_df, status_filter)
+    if topic_filter != "All Topics" and "topic" in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df["topic"].str.strip().str.lower() == topic_filter.strip().lower()]
 
     render_analytics_panel(
         "Individual Analytics",
         filtered_df,
         f"{student_name} hasn't scanned any math problems yet."
     )
+
+    if not filtered_df.empty:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Uploads", len(filtered_df))
+        with c2:
+            st.metric("Passed", int((filtered_df["status"] == "Passed").sum()))
+        with c3:
+            st.metric("Failed", int((filtered_df["status"] == "Failed").sum()))
 
     st.markdown("---")
     if filtered_df.empty:
@@ -1455,8 +1465,6 @@ def render_teacher_detail() -> None:
         if data.get("role") == "student" and data.get("class_code") == selected_code
     }
     class_history_df = filter_history_for_class(history_df, selected_code, list(student_accounts.keys()))
-    status_filter = st.sidebar.radio("Show submissions", ["All", "Passed", "Failed"], index=0, key=f"teacher_detail_status_filter_{selected_code}")
-    display_class_history_df = filter_history_by_status(class_history_df, status_filter)
 
     st.title(f"{teacher_classes[selected_code]} ({selected_code})")
     st.caption("Detailed class view")
@@ -1475,7 +1483,7 @@ def render_teacher_detail() -> None:
         with c1:
             st.metric("Students", len(student_accounts))
         with c2:
-            st.metric("Uploads", len(display_class_history_df))
+            st.metric("Uploads", len(class_history_df))
         with c3:
             st.metric("Assignments", assignment_summary["class_assignment_count"] + assignment_summary["targeted_practice_count"])
         with c4:
@@ -1483,20 +1491,18 @@ def render_teacher_detail() -> None:
 
         attention_names = []
         for s_user, s_data in student_accounts.items():
-            s_history_df = display_class_history_df[display_class_history_df["username"] == s_user]
-            if not s_history_df.empty and (s_history_df["status"] == "Failed").sum() >= (s_history_df["status"] == "Passed").sum():
+            s_history_df = class_history_df[class_history_df["username"] == s_user]
+            if not s_history_df.empty and len(s_history_df) > 0:
                 attention_names.append(s_data.get("first_name", s_user))
 
         st.write("Students needing attention:")
         st.write(", ".join(attention_names) if attention_names else "None so far.")
 
         st.write("Class Summary (AI):")
-        if display_class_history_df.empty:
-            st.info("No uploads yet for this filter.")
+        if class_history_df.empty:
+            st.info("No uploads yet for this class.")
         else:
-            total_passed = int((display_class_history_df["status"] == "Passed").sum())
-            total_failed = int((display_class_history_df["status"] == "Failed").sum())
-            st.success(f"{total_passed} passed, {total_failed} failed. {len(attention_names)} student(s) may need extra support.")
+            st.success(f"{len(class_history_df)} total submissions logged. {len(attention_names)} student(s) may need extra support.")
 
         st.markdown("---")
         st.write("Assignment snapshot:")
@@ -1507,7 +1513,7 @@ def render_teacher_detail() -> None:
             st.write("No open work right now.")
 
         st.markdown("---")
-        render_trend_and_prediction("Class-Wide Growth Trend", display_class_history_df, "All Topics", status_filter)
+        render_trend_and_prediction("Class-Wide Growth Trend", class_history_df, "All Topics", "All")
 
     elif view_choice == "Student Roster & Live Logs":
         if not student_accounts:
@@ -1516,7 +1522,7 @@ def render_teacher_detail() -> None:
             selected_student = st.session_state.get("selected_student_username")
 
             if selected_student and selected_student in student_accounts:
-                render_student_detail_for_teacher(selected_student, student_accounts[selected_student], display_class_history_df, selected_code)
+                render_student_detail_for_teacher(selected_student, student_accounts[selected_student], class_history_df, selected_code)
             else:
                 roster_topic_filter = st.selectbox(
                     "Filter submissions by topic",
@@ -1525,7 +1531,7 @@ def render_teacher_detail() -> None:
                 )
                 st.caption("Click a student to view their full history.")
                 for s_user, s_data in student_accounts.items():
-                    s_history_df = display_class_history_df[display_class_history_df["username"] == s_user]
+                    s_history_df = class_history_df[class_history_df["username"] == s_user]
                     if roster_topic_filter != "All Topics" and "topic" in s_history_df.columns:
                         s_history_df = s_history_df[s_history_df["topic"].str.strip().str.lower() == roster_topic_filter.strip().lower()]
 
@@ -1539,7 +1545,7 @@ def render_teacher_detail() -> None:
                         st.caption(f"{len(s_history_df)} submissions")
 
     elif view_choice == "Assignments & Comments":
-        render_teacher_assignments_and_comments(selected_code, teacher_classes, student_accounts, display_class_history_df)
+        render_teacher_assignments_and_comments(selected_code, teacher_classes, student_accounts, class_history_df)
 
     else:
         with st.expander("➕ Add a new topic"):
@@ -1554,7 +1560,7 @@ def render_teacher_detail() -> None:
                     st.rerun()
 
         st.subheader("Submissions by Topic")
-        topic_counts_df = summarize_topic_counts(display_class_history_df)
+        topic_counts_df = summarize_topic_counts(class_history_df)
         if topic_counts_df.empty:
             st.info("No submissions yet to break down by topic.")
         else:
@@ -1566,13 +1572,20 @@ def render_teacher_detail() -> None:
             ["All Topics"] + load_topics(selected_code),
             key="concept_topic_filter",
         )
-        if concept_topic_filter != "All Topics" and "topic" in display_class_history_df.columns:
-            topic_filtered_df = display_class_history_df[display_class_history_df["topic"].str.strip().str.lower() == concept_topic_filter.strip().lower()]
+        if concept_topic_filter != "All Topics" and "topic" in class_history_df.columns:
+            topic_filtered_df = class_history_df[class_history_df["topic"].str.strip().str.lower() == concept_topic_filter.strip().lower()]
         else:
-            topic_filtered_df = display_class_history_df
+            topic_filtered_df = class_history_df
+
+        st.subheader("Overall Class Errors")
+        overall_error_counts = summarize_history(class_history_df)
+        if overall_error_counts:
+            st.bar_chart(overall_error_counts)
+        else:
+            st.info("No class errors recorded yet.")
 
         st.markdown("---")
-        render_trend_and_prediction(f"Topic Growth Trend — {concept_topic_filter}", display_class_history_df, concept_topic_filter, status_filter)
+        render_trend_and_prediction(f"Topic Growth Trend — {concept_topic_filter}", class_history_df, concept_topic_filter, "All")
 
         render_analytics_panel(
             f"Classroom Misconception Breakdown — {concept_topic_filter}",
