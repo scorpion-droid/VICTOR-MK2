@@ -994,6 +994,7 @@ def render_student_history_page() -> None:
     st.title("Your Performance History")
     history_df = load_history_df()
     user_history_df = history_df[history_df["username"] == username]
+    student_display_name = st.session_state.get("name", username)
 
     topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(user_profile.get("class_code", "")), key="history_topic_filter")
     if topic_filter != "All Topics" and "topic" in user_history_df.columns:
@@ -1022,7 +1023,7 @@ def render_student_history_page() -> None:
             )
 
     st.markdown("---")
-    render_trend_and_prediction(f"{student_name} Growth Trend", filtered_df, "All Topics", "All")
+    render_trend_and_prediction(f"{student_display_name} Growth Trend", filtered_df, "All Topics", "All")
 
 def render_assignment_card(assignment: pd.Series, assignment_type: str, completion_map: dict[tuple[str, str], dict]) -> None:
     assignment_id = str(assignment.get("assignment_id", "")).strip()
@@ -1182,38 +1183,41 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
 
     with tab_targeted:
         st.caption("Create practice for one student. It still appears in the student's normal workflow as targeted practice.")
-        with st.form(f"targeted_practice_form_{selected_code}", clear_on_submit=True):
-            student_username = st.selectbox("Student", student_options, format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x)
-            title = st.text_input("Practice title")
-            topic = st.selectbox("Topic", topic_options, key=f"targeted_topic_{selected_code}")
-            due_date = st.date_input("Due date", key=f"targeted_due_{selected_code}")
-            instructions = st.text_area("Instructions", key=f"targeted_instructions_{selected_code}")
-            attachment_link = st.text_input("Attachment link (optional)", key=f"targeted_link_{selected_code}")
-            attachment_file = st.file_uploader("Or upload an image (optional)", type=["png", "jpg", "jpeg", "webp", "heic", "heif"], key=f"targeted_upload_{selected_code}")
-            submitted = st.form_submit_button("Publish targeted practice")
+        if not student_options:
+            st.info("No students are in this class yet, so targeted practice is unavailable for now.")
+        else:
+            with st.form(f"targeted_practice_form_{selected_code}", clear_on_submit=True):
+                student_username = st.selectbox("Student", student_options, format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x)
+                title = st.text_input("Practice title")
+                topic = st.selectbox("Topic", topic_options, key=f"targeted_topic_{selected_code}")
+                due_date = st.date_input("Due date", key=f"targeted_due_{selected_code}")
+                instructions = st.text_area("Instructions", key=f"targeted_instructions_{selected_code}")
+                attachment_link = st.text_input("Attachment link (optional)", key=f"targeted_link_{selected_code}")
+                attachment_file = st.file_uploader("Or upload an image (optional)", type=["png", "jpg", "jpeg", "webp", "heic", "heif"], key=f"targeted_upload_{selected_code}")
+                submitted = st.form_submit_button("Publish targeted practice")
 
-        if submitted:
-            if not title.strip():
-                st.warning("Please add a title first.")
-            else:
-                attachment_type, attachment_b64 = encode_uploaded_file(attachment_file)
-                row = {
-                    "assignment_id": make_record_id("practice"),
-                    "class_code": selected_code,
-                    "username": student_username,
-                    "topic": "" if topic == "No topic" else topic,
-                    "title": title.strip(),
-                    "instructions": instructions.strip(),
-                    "due_date": str(due_date),
-                    "attachment_type": attachment_type if attachment_type else ("link" if attachment_link.strip() else ""),
-                    "attachment_link": attachment_link.strip(),
-                    "attachment_b64": attachment_b64,
-                    "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
-                    "created_by": st.session_state.get("username", ""),
-                }
-                if save_targeted_practice(row):
-                    st.success("Targeted practice published.")
-                    st.rerun()
+            if submitted:
+                if not title.strip():
+                    st.warning("Please add a title first.")
+                else:
+                    attachment_type, attachment_b64 = encode_uploaded_file(attachment_file)
+                    row = {
+                        "assignment_id": make_record_id("practice"),
+                        "class_code": selected_code,
+                        "username": student_username,
+                        "topic": "" if topic == "No topic" else topic,
+                        "title": title.strip(),
+                        "instructions": instructions.strip(),
+                        "due_date": str(due_date),
+                        "attachment_type": attachment_type if attachment_type else ("link" if attachment_link.strip() else ""),
+                        "attachment_link": attachment_link.strip(),
+                        "attachment_b64": attachment_b64,
+                        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                        "created_by": st.session_state.get("username", ""),
+                    }
+                    if save_targeted_practice(row):
+                        st.success("Targeted practice published.")
+                        st.rerun()
 
         st.markdown("---")
         targeted_df = get_targeted_practice_for_class(selected_code)
@@ -1227,8 +1231,11 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
         st.caption("Leave feedback to the whole class or to one student individually.")
         with st.form(f"teacher_comment_form_{selected_code}", clear_on_submit=True):
             comment_scope = st.radio("Comment scope", ["Class", "Individual Student"], horizontal=True, key=f"comment_scope_{selected_code}")
-            if comment_scope == "Individual Student":
+            if comment_scope == "Individual Student" and student_options:
                 comment_student = st.selectbox("Student", student_options, format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x)
+            elif comment_scope == "Individual Student":
+                st.info("No students are in this class yet, so individual comments are unavailable for now.")
+                comment_student = ""
             else:
                 comment_student = ""
             comment_topic = st.selectbox("Topic (optional)", topic_options, key=f"comment_topic_{selected_code}")
@@ -1238,6 +1245,8 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
         if submitted:
             if not comment_message.strip():
                 st.warning("Write a comment first.")
+            elif comment_scope == "Individual Student" and not student_options:
+                st.warning("Add students to the class before sending an individual comment.")
             else:
                 row = {
                     "comment_id": make_record_id("comment"),
