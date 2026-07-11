@@ -36,10 +36,8 @@ def get_gspread_client():
 gc, SPREADSHEET_ID = get_gspread_client()
 
 # Safe database readers using the public connection manager
-_last_good_users_df = pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"])
-
 def load_users_df():
-    global _last_good_users_df
+    fallback = st.session_state.get("_last_good_users_df", pd.DataFrame(columns=USER_COLS))
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
@@ -49,17 +47,15 @@ def load_users_df():
         else:
             df = conn.read(worksheet="Users", ttl=0)
     except Exception:
-        return _last_good_users_df
+        return fallback
 
     if df is not None and not df.empty:
-        _last_good_users_df = df
+        st.session_state["_last_good_users_df"] = df
         return df
-    return _last_good_users_df
-
-_last_good_history_df = pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type", "topic"])
+    return fallback
 
 def load_history_df():
-    global _last_good_history_df
+    fallback = st.session_state.get("_last_good_history_df", pd.DataFrame(columns=HISTORY_COLS))
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
@@ -69,12 +65,12 @@ def load_history_df():
         else:
             df = conn.read(worksheet="History", ttl=0)
     except Exception:
-        return _last_good_history_df
+        return fallback
 
     if df is not None and not df.empty:
-        _last_good_history_df = df
+        st.session_state["_last_good_history_df"] = df
         return df
-    return _last_good_history_df
+    return fallback
 
 def normalize_auth_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -135,10 +131,9 @@ DEFAULT_TOPICS = [
     "Inequalities",
 ]
 
-_last_good_topics_by_class: dict[str, list[str]] = {}
-
 def load_topics(class_code: str) -> list[str]:
     class_code = (class_code or "").strip().lower()
+    cache = st.session_state.setdefault("_last_good_topics_by_class", {})
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
@@ -153,11 +148,11 @@ def load_topics(class_code: str) -> list[str]:
             if str(r.get("class_code", "")).strip().lower() == class_code and str(r.get("topic", "")).strip()
         ]
         if topics:
-            _last_good_topics_by_class[class_code] = topics
+            cache[class_code] = topics
             return topics
         return DEFAULT_TOPICS
     except Exception:
-        return _last_good_topics_by_class.get(class_code, DEFAULT_TOPICS)
+        return cache.get(class_code, DEFAULT_TOPICS)
 
 def add_topic(class_code: str, new_topic: str) -> bool:
     class_code = (class_code or "").strip().lower()
@@ -532,7 +527,7 @@ def render_student_history_page() -> None:
 
     topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(user_profile.get("class_code", "")), key="history_topic_filter")
     if topic_filter != "All Topics" and "topic" in user_history_df.columns:
-        filtered_df = user_history_df[user_history_df["topic"] == topic_filter]
+        filtered_df = user_history_df[user_history_df["topic"].str.strip().str.lower() == topic_filter.strip().lower()]
     else:
         filtered_df = user_history_df
 
@@ -674,7 +669,7 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
         key=f"student_detail_topic_filter_{s_user}",
     )
     if topic_filter != "All Topics" and "topic" in s_history_df.columns:
-        filtered_df = s_history_df[s_history_df["topic"] == topic_filter]
+        filtered_df = s_history_df[s_history_df["topic"].str.strip().str.lower() == topic_filter.strip().lower()]
     else:
         filtered_df = s_history_df
 
@@ -770,7 +765,7 @@ def render_teacher_detail() -> None:
                 for s_user, s_data in student_accounts.items():
                     s_history_df = class_history_df[class_history_df["username"] == s_user]
                     if roster_topic_filter != "All Topics" and "topic" in s_history_df.columns:
-                        s_history_df = s_history_df[s_history_df["topic"] == roster_topic_filter]
+                        s_history_df = s_history_df[s_history_df["topic"].str.strip().str.lower() == roster_topic_filter.strip().lower()]
 
                     student_name = f"{s_data.get('first_name', s_user)} {s_data.get('last_name', '')}".strip()
                     col_name, col_count = st.columns([4, 1])
@@ -807,7 +802,7 @@ def render_teacher_detail() -> None:
             key="concept_topic_filter",
         )
         if concept_topic_filter != "All Topics" and "topic" in class_history_df.columns:
-            topic_filtered_df = class_history_df[class_history_df["topic"] == concept_topic_filter]
+            topic_filtered_df = class_history_df[class_history_df["topic"].str.strip().str.lower() == concept_topic_filter.strip().lower()]
         else:
             topic_filtered_df = class_history_df
 
