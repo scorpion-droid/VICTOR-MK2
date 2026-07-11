@@ -411,7 +411,9 @@ def filter_history_for_class(history_df: pd.DataFrame, class_code: str, student_
             return class_df
 
     if "username" in working_df.columns:
-        return working_df[working_df["username"].isin(student_usernames)]
+        username_df = working_df[working_df["username"].isin(student_usernames)]
+        if not username_df.empty:
+            return username_df
 
     return pd.DataFrame(columns=HISTORY_COLS)
 
@@ -562,6 +564,14 @@ def filter_history_by_status(history_df: pd.DataFrame, status_filter: str) -> pd
         return history_df[history_df["status"] == "Failed"]
     return history_df.copy()
 
+def _safe_parse_datetime_value(value):
+    if pd.isna(value):
+        return pd.NaT
+    try:
+        return pd.to_datetime(str(value).strip(), errors="coerce")
+    except Exception:
+        return pd.NaT
+
 def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "All") -> pd.DataFrame:
     if history_df.empty:
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
@@ -572,9 +582,11 @@ def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "Al
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
 
     if "date" in working_df.columns:
-        date_series = working_df["date"].fillna("").astype(str).str.strip()
-        working_df["parsed_date"] = pd.to_datetime(date_series, errors="coerce")
-        working_df = working_df.sort_values(["parsed_date"], kind="stable")
+        working_df["parsed_date"] = working_df["date"].apply(_safe_parse_datetime_value)
+        if working_df["parsed_date"].notna().any():
+            working_df = working_df.sort_values(["parsed_date"], kind="stable")
+        else:
+            working_df = working_df.reset_index(drop=True)
     else:
         working_df = working_df.reset_index(drop=True)
 
