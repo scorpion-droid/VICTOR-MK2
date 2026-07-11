@@ -1,4 +1,5 @@
 import os
+import re
 from google import genai
 from App.models import CheckResult
 from App.algebra import (
@@ -56,7 +57,67 @@ def get_ai_error_diagnostic(prev_step: str, incorrect_step: str) -> str:
     except Exception:
         return "Algebra step validation failed. Check your signs, distribution, or basic calculations."
 
-def detect_first_error(steps: list[str]) -> CheckResult:
+def _clean_category_name(category: str) -> str:
+    category = re.sub(r"\s+", " ", str(category or "")).strip()
+    category = re.sub(r"[^A-Za-z0-9 &/\-]", "", category)
+    return category[:60].strip() or "General Misconception"
+
+
+def get_ai_error_category(
+    prev_step: str,
+    incorrect_step: str,
+    diagnostic: str,
+    known_categories: list[str] | None = None,
+    class_code: str | None = None,
+) -> str:
+    """
+    Ask Gemini for a short reusable category name for the mistake.
+    If existing categories for this class are available, Gemini should prefer reusing one.
+    """
+    category_hint = ", ".join(known_categories[:20]) if known_categories else "None yet"
+    class_text = class_code or "unassigned"
+    prompt = f"""
+    You are labeling a student's math mistake for analytics in class {class_text}.
+
+    Previous step:
+    {prev_step}
+
+    Incorrect step:
+    {incorrect_step}
+
+    Teacher diagnostic:
+    {diagnostic}
+
+    Existing categories for this class:
+    {category_hint}
+
+    Task:
+    - Return ONE short category name only.
+    - Prefer reusing an existing category if it is a close match.
+    - If none fit well, invent a new reusable label.
+    - Keep it 2 to 6 words.
+    - Use Title Case.
+    - Do not include punctuation or extra explanation.
+    """
+    client = _get_gemini_client()
+    if client is None:
+        return "General Misconception"
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=prompt,
+        )
+        return _clean_category_name(response.text)
+    except Exception:
+        return "General Misconception"
+
+
+def detect_first_error(
+    steps: list[str],
+    class_code: str | None = None,
+    known_categories: list[str] | None = None,
+) -> CheckResult:
     if len(steps) < 2:
         return CheckResult(passed=False, 
                            message = "Not enough steps to check.", 
@@ -86,23 +147,27 @@ def detect_first_error(steps: list[str]) -> CheckResult:
                     passed=False,
                     message=f"Step {i + 1} is empty.",
                     first_error_index=i,
+                    error_category="Incomplete Step",
                 )
 
             try:
                 if not step_holds_under_assignment(current, system_assignment):
                     prev_context = steps[i - 1] if i > 0 else "Initial Equation"
                     ai_reason = get_ai_error_diagnostic(prev_context, current)
+                    ai_category = get_ai_error_category(prev_context, current, ai_reason, known_categories, class_code)
                     
                     return CheckResult(
                         passed=False,
                         message=f"Error on Step {i + 1}: {ai_reason}",
                         first_error_index=i,
+                        error_category=ai_category,
                     )
             except Exception as exc:
                 return CheckResult(
                     passed=False,
                     message=f"Step {i + 1} could not be read: {exc}",
                     first_error_index=i,
+                    error_category="OCR Or Parsing",
                 )
 
         return CheckResult(
@@ -118,13 +183,19 @@ def detect_first_error(steps: list[str]) -> CheckResult:
             passed=False,
             message=f"Step 1 could not be read: {exc}",
             first_error_index=0,
+            error_category="OCR Or Parsing",
         )
 
     for i in range(1, len(steps)):
         current = steps[i].strip()
 
         if current == "":
-            return CheckResult(passed=False, message=f"Step {i + 1} is empty.", first_error_index=i)
+            return CheckResult(
+                passed=False,
+                message=f"Step {i + 1} is empty.",
+                first_error_index=i,
+                error_category="Incomplete Step",
+            )
 
         try:
             current_signature = step_signature(current)
@@ -133,14 +204,17 @@ def detect_first_error(steps: list[str]) -> CheckResult:
                 passed=False,
                 message=f"Step {i + 1} could not be read: {exc}",
                 first_error_index=i,
+                error_category="OCR Or Parsing",
             )
         
         if current_signature != previous_signature:
             ai_reason = get_ai_error_diagnostic(steps[i - 1], current)
+            ai_category = get_ai_error_category(steps[i - 1], current, ai_reason, known_categories, class_code)
             return CheckResult(
                 passed=False,
                 message=f"Error on Step {i + 1}: {ai_reason}",
                 first_error_index=i,
+                error_category=ai_category,
             )
         
         previous_signature = current_signature
