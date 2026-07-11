@@ -36,27 +36,45 @@ def get_gspread_client():
 gc, SPREADSHEET_ID = get_gspread_client()
 
 # Safe database readers using the public connection manager
+_last_good_users_df = pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"])
+
 def load_users_df():
+    global _last_good_users_df
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
             worksheet = sh.worksheet("Users")
             records = worksheet.get_all_records()
-            return pd.DataFrame(records) if records else pd.DataFrame(columns=USER_COLS)
-        return conn.read(worksheet="Users", ttl=0)
+            df = pd.DataFrame(records) if records else pd.DataFrame(columns=USER_COLS)
+        else:
+            df = conn.read(worksheet="Users", ttl=0)
     except Exception:
-        return pd.DataFrame(columns=["username", "password", "first_name", "last_name", "email", "role", "class_code", "classes", "password_hint"])
+        return _last_good_users_df
+
+    if df is not None and not df.empty:
+        _last_good_users_df = df
+        return df
+    return _last_good_users_df
+
+_last_good_history_df = pd.DataFrame(columns=["username", "date", "equation", "status", "message", "error_type", "topic"])
 
 def load_history_df():
+    global _last_good_history_df
     try:
         if gc and SPREADSHEET_ID:
             sh = gc.open_by_key(SPREADSHEET_ID)
             worksheet = sh.worksheet("History")
             records = worksheet.get_all_records()
-            return pd.DataFrame(records) if records else pd.DataFrame(columns=HISTORY_COLS)
-        return conn.read(worksheet="History", ttl=0)
+            df = pd.DataFrame(records) if records else pd.DataFrame(columns=HISTORY_COLS)
+        else:
+            df = conn.read(worksheet="History", ttl=0)
     except Exception:
-        return pd.DataFrame(columns=HISTORY_COLS)
+        return _last_good_history_df
+
+    if df is not None and not df.empty:
+        _last_good_history_df = df
+        return df
+    return _last_good_history_df
 
 def normalize_auth_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -117,6 +135,8 @@ DEFAULT_TOPICS = [
     "Inequalities",
 ]
 
+_last_good_topics_by_class: dict[str, list[str]] = {}
+
 def load_topics(class_code: str) -> list[str]:
     class_code = (class_code or "").strip().lower()
     try:
@@ -132,9 +152,12 @@ def load_topics(class_code: str) -> list[str]:
             for r in records
             if str(r.get("class_code", "")).strip().lower() == class_code and str(r.get("topic", "")).strip()
         ]
-        return topics if topics else DEFAULT_TOPICS
-    except Exception:
+        if topics:
+            _last_good_topics_by_class[class_code] = topics
+            return topics
         return DEFAULT_TOPICS
+    except Exception:
+        return _last_good_topics_by_class.get(class_code, DEFAULT_TOPICS)
 
 def add_topic(class_code: str, new_topic: str) -> bool:
     class_code = (class_code or "").strip().lower()
@@ -455,8 +478,13 @@ def render_student_checker_page(topic: str) -> None:
                         with open("temp_image.png", "wb") as f:
                             f.write(uploaded_file.getvalue())
 
-                    st.session_state[ocr_text_key] = clean_image("temp_image.png").strip()
-                    st.session_state[ocr_ready_key] = True
+                    extracted_text = clean_image("temp_image.png").strip()
+                    st.session_state[ocr_text_key] = extracted_text
+                    if extracted_text:
+                        st.session_state[ocr_ready_key] = True
+                    else:
+                        st.session_state[ocr_ready_key] = False
+                        st.warning("No text could be read from that image. Try a clearer photo.")
                 except Exception:
                     st.error("The AI service is experiencing heavy traffic. Please try again.")
 
