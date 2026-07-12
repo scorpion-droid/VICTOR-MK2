@@ -227,7 +227,7 @@ def replace_dataframe_in_worksheet(worksheet_name, df, target_columns):
         return False
     try:
         sh = gc.open_by_key(SPREADSHEET_ID)
-        worksheet = _get_or_create_worksheet(sh, target_columns=target_columns, worksheet_name=worksheet_name)
+        worksheet = _get_or_create_worksheet(sh, worksheet_name, target_columns)
 
         working_df = df.copy()
         for col in target_columns:
