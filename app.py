@@ -1023,7 +1023,6 @@ def render_student_history_page() -> None:
     st.title("Your Performance History")
     history_df = load_history_df()
     user_history_df = history_df[history_df["username"] == username]
-    student_display_name = st.session_state.get("name", username)
 
     topic_filter = st.selectbox("Filter by topic", ["All Topics"] + load_topics(user_profile.get("class_code", "")), key="history_topic_filter")
     if topic_filter != "All Topics" and "topic" in user_history_df.columns:
@@ -1050,9 +1049,6 @@ def render_student_history_page() -> None:
                 passed=item["status"] == "Passed",
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
-
-    st.markdown("---")
-    render_trend_and_prediction(f"{student_display_name} Growth Trend", filtered_df, "All Topics", "All")
 
 def render_assignment_card(assignment: pd.Series, assignment_type: str, completion_map: dict[tuple[str, str], dict]) -> None:
     assignment_id = str(assignment.get("assignment_id", "")).strip()
@@ -1254,8 +1250,8 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
 
     with tab_comments:
         st.caption("Leave feedback to the whole class or to one student individually.")
+        comment_scope = st.radio("Comment scope", ["Class", "Individual Student"], horizontal=True, key=f"comment_scope_{selected_code}")
         with st.form(f"teacher_comment_form_{selected_code}", clear_on_submit=True):
-            comment_scope = st.radio("Comment scope", ["Class", "Individual Student"], horizontal=True, key=f"comment_scope_{selected_code}")
             if student_options:
                 comment_student = st.selectbox(
                     "Choose student",
@@ -1473,6 +1469,9 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
                 passed=item["status"] == "Passed",
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
+
+    st.markdown("---")
+    render_trend_and_prediction(f"{student_name} Growth Trend", s_history_df, topic_filter, status_filter)
 
 def render_teacher_detail() -> None:
     global teacher_dashboard_page
