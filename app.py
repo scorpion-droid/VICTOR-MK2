@@ -8,7 +8,6 @@ import string
 import datetime
 import functools
 import uuid
-from zoneinfo import ZoneInfo
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -19,29 +18,20 @@ from streamlit_authenticator.utilities import Hasher
 from streamlit_gsheets import GSheetsConnection
 from google import genai
 from App.sanitiser import clean_image
-from App.checker import detect_first_error
+from App.checker import detect_first_error, detect_word_problem_error
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 OCR_MAX_QUESTIONS = 5
-AST_TZ = ZoneInfo("Asia/Riyadh")
 
-def _now_ast() -> datetime.datetime:
-    return datetime.datetime.now(AST_TZ)
+# All timestamps written by this app are standardized to Arabia Standard
+# Time (UTC+3). AST has no daylight saving, so a fixed offset is exact
+# year-round with no timezone-database dependency needed.
+AST_TIMEZONE = datetime.timezone(datetime.timedelta(hours=3))
 
-def _format_ast_timestamp(dt: datetime.datetime | None = None) -> str:
-    dt = dt or _now_ast()
-    return dt.astimezone(AST_TZ).isoformat(timespec="seconds")
-
-def _parse_timestamp_to_utc(value) -> pd.Timestamp:
-    try:
-        parsed = pd.to_datetime(str(value).strip(), errors="coerce", utc=True)
-        if pd.isna(parsed):
-            return pd.NaT
-        return parsed
-    except Exception:
-        return pd.NaT
+def now_ast() -> datetime.datetime:
+    return datetime.datetime.now(AST_TIMEZONE)
 
 @st.cache_resource(ttl=0)
 def get_gspread_client():
@@ -403,7 +393,7 @@ def record_category_usage(
 ) -> bool:
     class_code = (class_code or "").strip().lower() or "unassigned"
     category_name = normalize_category_name(category_name)
-    timestamp = _format_ast_timestamp()
+    timestamp = now_ast().strftime("%Y-%m-%d %H-%M")
 
     categories_df = load_categories_df()
     if categories_df.empty:
@@ -594,7 +584,7 @@ def get_private_message_thread(class_code: str, username: str) -> pd.DataFrame:
 
     if "created_at" in working_df.columns:
         working_df = working_df.copy()
-        working_df["_sort_key"] = working_df["created_at"].apply(_parse_timestamp_to_utc)
+        working_df["_sort_key"] = pd.to_datetime(working_df["created_at"], errors="coerce")
         working_df = working_df.sort_values("_sort_key", kind="stable")
     return working_df
 
@@ -705,7 +695,7 @@ def filter_history_by_status(history_df: pd.DataFrame, status_filter: str) -> pd
 
 def _safe_datetime_sort_key(value) -> int:
     try:
-        parsed = _parse_timestamp_to_utc(value)
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", utc=True)
         if pd.isna(parsed):
             return -1
         return int(parsed.value)
@@ -1112,6 +1102,7 @@ def reset_ocr_state(slug: str) -> None:
     for index in range(1, OCR_MAX_QUESTIONS + 1):
         st.session_state.pop(f"ocr_include_{slug}_{index}", None)
         st.session_state.pop(f"ocr_question_text_{slug}_{index}", None)
+        st.session_state.pop(f"ocr_word_problem_{slug}_{index}", None)
 
 def render_student_checker_page(topic: str) -> None:
     slug = _topic_slug(topic)
@@ -1199,12 +1190,22 @@ def render_student_checker_page(topic: str) -> None:
             for index, block in enumerate(question_blocks, start=1):
                 include_key = f"ocr_include_{slug}_{index}"
                 text_key = f"ocr_question_text_{slug}_{index}"
+                word_problem_key = f"ocr_word_problem_{slug}_{index}"
                 st.session_state.setdefault(include_key, True)
+                st.session_state.setdefault(word_problem_key, False)
                 if text_key not in st.session_state:
                     st.session_state[text_key] = block
 
                 with st.container(border=True):
-                    st.checkbox(f"Check Question {index}", key=include_key)
+                    col_include, col_word_problem = st.columns(2)
+                    with col_include:
+                        st.checkbox(f"Check Question {index}", key=include_key)
+                    with col_word_problem:
+                        st.checkbox(
+                            "This is a word problem",
+                            key=word_problem_key,
+                            help="Turn this on if the question is written reasoning and a final answer, not clean algebra steps. It gets checked holistically instead of step-by-step.",
+                        )
                     st.text_area(
                         f"Question {index} OCR text",
                         key=text_key,
@@ -1222,25 +1223,34 @@ def render_student_checker_page(topic: str) -> None:
                 for index, _block in enumerate(question_blocks, start=1):
                     include_key = f"ocr_include_{slug}_{index}"
                     text_key = f"ocr_question_text_{slug}_{index}"
+                    word_problem_key = f"ocr_word_problem_{slug}_{index}"
                     if not st.session_state.get(include_key, True):
                         continue
 
                     raw_question = str(st.session_state.get(text_key, "")).strip()
+                    is_word_problem = bool(st.session_state.get(word_problem_key, False))
                     steps = [s.strip() for s in raw_question.splitlines() if s.strip()]
                     if not steps:
                         st.warning(f"Question {index} is empty, so it was skipped.")
                         continue
 
-                    result = detect_first_error(
-                        steps,
-                        class_code=user_profile.get("class_code", ""),
-                        known_categories=known_categories,
-                    )
+                    if is_word_problem:
+                        result = detect_word_problem_error(
+                            raw_question,
+                            class_code=user_profile.get("class_code", ""),
+                            known_categories=known_categories,
+                        )
+                    else:
+                        result = detect_first_error(
+                            steps,
+                            class_code=user_profile.get("class_code", ""),
+                            known_categories=known_categories,
+                        )
                     checked_count += 1
                     status_str = "Passed" if result.passed else "Failed"
                     error_category_str = "N/A"
 
-                    st.markdown(f"#### Question {index}")
+                    st.markdown(f"#### Question {index}" + (" (Word Problem)" if is_word_problem else ""))
                     if result.passed:
                         st.success(f"Passed: {result.message}")
                     else:
@@ -1253,13 +1263,14 @@ def render_student_checker_page(topic: str) -> None:
                             example_message=result.message,
                         )
 
-                    timestamp = _format_ast_timestamp()
+                    timestamp = now_ast().strftime("%Y-%m-%d %H-%M")
                     numbered_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
+                    question_label = f"Question {index}" + (" (Word Problem)" if is_word_problem else "")
                     new_row = {
                         "username": username,
                         "class_code": user_profile.get("class_code", ""),
                         "date": timestamp,
-                        "equation": f"Question {index}\n{numbered_steps}",
+                        "equation": f"{question_label}\n{numbered_steps}",
                         "status": status_str,
                         "message": result.message,
                         "error_category": error_category_str,
@@ -1360,7 +1371,7 @@ def render_assignment_card(assignment: pd.Series, assignment_type: str, completi
                     "class_code": str(assignment.get("class_code", "")).strip().lower(),
                     "username": st.session_state.get("username", ""),
                     "status": "done",
-                    "completed_at": _format_ast_timestamp(),
+                    "completed_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                     "title": title,
                     "topic": topic,
                     "due_date": due_date,
@@ -1460,7 +1471,7 @@ def render_student_messages_page() -> None:
                 "username": username,
                 "topic": "" if reply_topic == "No topic" else reply_topic,
                 "message": reply_message.strip(),
-                "created_at": _format_ast_timestamp(),
+                "created_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                 "created_by": username,
             }
             if save_teacher_comment(row):
@@ -1481,7 +1492,7 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
     ].copy()
 
     if "created_at" in thread_df.columns and not thread_df.empty:
-        thread_df["_sort_key"] = thread_df["created_at"].apply(_parse_timestamp_to_utc)
+        thread_df["_sort_key"] = pd.to_datetime(thread_df["created_at"], errors="coerce")
         thread_df = thread_df.sort_values("_sort_key", kind="stable")
 
     if thread_df.empty:
@@ -1520,7 +1531,7 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
                 "username": student_username,
                 "topic": "" if chat_topic == "No topic" else chat_topic,
                 "message": chat_message.strip(),
-                "created_at": _format_ast_timestamp(),
+                "created_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                 "created_by": st.session_state.get("username", ""),
             }
             if save_teacher_comment(row):
@@ -1539,7 +1550,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
         with st.form(f"class_assignment_form_{selected_code}", clear_on_submit=True):
             title = st.text_input("Assignment title")
             topic = st.selectbox("Topic", topic_options, key=f"class_assignment_topic_{selected_code}")
-            due_date = st.date_input("Due date")
+            due_date = st.date_input("Due date", value=now_ast().date())
             instructions = st.text_area("Instructions")
             attachment_link = st.text_input("Attachment link (e.g. a Google Drive link)")
             submitted = st.form_submit_button("Publish class assignment")
@@ -1558,7 +1569,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "attachment_type": "link" if attachment_link.strip() else "",
                     "attachment_link": attachment_link.strip(),
                     "attachment_b64": "",
-                    "created_at": _format_ast_timestamp(),
+                    "created_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                     "created_by": st.session_state.get("username", ""),
                 }
                 if save_class_assignment(row):
@@ -1592,7 +1603,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                 student_username = st.selectbox("Student", student_options, format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x)
                 title = st.text_input("Practice title")
                 topic = st.selectbox("Topic", topic_options, key=f"targeted_topic_{selected_code}")
-                due_date = st.date_input("Due date", key=f"targeted_due_{selected_code}")
+                due_date = st.date_input("Due date", value=now_ast().date(), key=f"targeted_due_{selected_code}")
                 instructions = st.text_area("Instructions", key=f"targeted_instructions_{selected_code}")
                 attachment_link = st.text_input("Attachment link (e.g. a Google Drive link)", key=f"targeted_link_{selected_code}")
                 submitted = st.form_submit_button("Publish targeted practice")
@@ -1612,7 +1623,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                         "attachment_type": "link" if attachment_link.strip() else "",
                         "attachment_link": attachment_link.strip(),
                         "attachment_b64": "",
-                        "created_at": _format_ast_timestamp(),
+                        "created_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                         "created_by": st.session_state.get("username", ""),
                     }
                     if save_targeted_practice(row):
@@ -1645,7 +1656,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "username": "",
                     "topic": "" if comment_topic == "No topic" else comment_topic,
                     "message": comment_message.strip(),
-                    "created_at": _format_ast_timestamp(),
+                    "created_at": now_ast().strftime("%Y-%m-%d %H-%M"),
                     "created_by": st.session_state.get("username", ""),
                 }
                 if save_teacher_comment(row):
