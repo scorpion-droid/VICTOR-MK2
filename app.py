@@ -1278,9 +1278,6 @@ def render_student_history_page() -> None:
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
 
-    st.markdown("---")
-    render_teacher_student_chatbox(class_code, s_user, s_data)
-
 def render_assignment_card(assignment: pd.Series, assignment_type: str, completion_map: dict[tuple[str, str], dict]) -> None:
     assignment_id = str(assignment.get("assignment_id", "")).strip()
     title = str(assignment.get("title", "")).strip() or "Untitled"
@@ -1823,6 +1820,7 @@ def render_teacher_detail() -> None:
             st.info("No students have entered this classroom code yet.")
         else:
             selected_student = st.session_state.get("selected_student_username")
+            selected_chat_student = st.session_state.get("selected_student_chat_username")
 
             if selected_student and selected_student in student_accounts:
                 render_student_detail_for_teacher(selected_student, student_accounts[selected_student], class_history_df, selected_code)
@@ -1839,13 +1837,28 @@ def render_teacher_detail() -> None:
                         s_history_df = s_history_df[s_history_df["topic"].str.strip().str.lower() == roster_topic_filter.strip().lower()]
 
                     student_name = f"{s_data.get('first_name', s_user)} {s_data.get('last_name', '')}".strip()
-                    col_name, col_count = st.columns([4, 1])
-                    with col_name:
-                        if st.button(f"{student_name} (@{s_user})", key=f"open_student_{s_user}", use_container_width=True):
+                    col_label, col_profile, col_chat, col_count = st.columns([3.5, 1.5, 1.5, 1])
+                    with col_label:
+                        st.markdown(f"**{student_name}**  \n@{s_user}")
+                    with col_profile:
+                        if st.button("Profile", key=f"open_student_{s_user}", use_container_width=True):
                             st.session_state["selected_student_username"] = s_user
+                            st.session_state.pop("selected_student_chat_username", None)
+                            st.rerun()
+                    with col_chat:
+                        if st.button("Chat", key=f"chat_student_{s_user}", use_container_width=True):
+                            st.session_state["selected_student_chat_username"] = s_user
+                            st.session_state.pop("selected_student_username", None)
                             st.rerun()
                     with col_count:
                         st.caption(f"{len(s_history_df)} submissions")
+
+                if selected_chat_student and selected_chat_student in student_accounts:
+                    st.markdown("---")
+                    render_teacher_student_chatbox(selected_code, selected_chat_student, student_accounts[selected_chat_student])
+                    if st.button("Close Chat", key=f"close_chat_{selected_chat_student}"):
+                        st.session_state.pop("selected_student_chat_username", None)
+                        st.rerun()
 
     elif view_choice == "Assignments & Comments":
         render_teacher_assignments_and_comments(selected_code, teacher_classes, student_accounts, class_history_df)
