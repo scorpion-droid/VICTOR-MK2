@@ -1058,6 +1058,8 @@ def reset_ocr_state(slug: str) -> None:
     st.session_state[f"ocr_text_{slug}"] = ""
     st.session_state[f"ocr_ready_{slug}"] = False
     st.session_state[f"ocr_blocks_{slug}"] = []
+    st.session_state[f"ocr_pending_rows_{slug}"] = []
+    st.session_state[f"ocr_saved_notice_{slug}"] = ""
     for index in range(1, OCR_MAX_QUESTIONS + 1):
         st.session_state.pop(f"ocr_include_{slug}_{index}", None)
         st.session_state.pop(f"ocr_question_text_{slug}_{index}", None)
@@ -1069,11 +1071,13 @@ def render_student_checker_page(topic: str) -> None:
     ocr_ready_key = f"ocr_ready_{slug}"
     ocr_blocks_key = f"ocr_blocks_{slug}"
     ocr_saved_notice_key = f"ocr_saved_notice_{slug}"
+    ocr_pending_rows_key = f"ocr_pending_rows_{slug}"
 
     st.session_state.setdefault(ocr_text_key, "")
     st.session_state.setdefault(ocr_ready_key, False)
     st.session_state.setdefault(ocr_blocks_key, [])
     st.session_state.setdefault(ocr_saved_notice_key, "")
+    st.session_state.setdefault(ocr_pending_rows_key, [])
 
     st.title("V.I.C.T.O.R")
     st.subheader(f"{topic} — Upload your steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
@@ -1118,6 +1122,25 @@ def render_student_checker_page(topic: str) -> None:
             st.info("Review each OCR question below, fix any symbol mistakes, and tick the ones you want checked.")
             if st.session_state.get(ocr_saved_notice_key):
                 st.success(st.session_state[ocr_saved_notice_key])
+            pending_rows = st.session_state.get(ocr_pending_rows_key, [])
+            if pending_rows:
+                st.warning(f"{len(pending_rows)} question(s) still need to be saved to the sheet.")
+                if st.button("Retry Save Pending Questions", key=f"retry_pending_{slug}"):
+                    still_pending: list[dict] = []
+                    saved_retry_count = 0
+                    for pending_row in pending_rows:
+                        if append_dataframe_to_worksheet("History", pd.DataFrame([pending_row]), HISTORY_COLS):
+                            saved_retry_count += 1
+                        else:
+                            still_pending.append(pending_row)
+                    st.session_state[ocr_pending_rows_key] = still_pending
+                    if saved_retry_count:
+                        st.session_state[ocr_saved_notice_key] = f"Saved {saved_retry_count} pending question(s) to history."
+                        st.success(st.session_state[ocr_saved_notice_key])
+                    if still_pending:
+                        st.warning(f"{len(still_pending)} question(s) are still pending. Try again later.")
+                    else:
+                        st.rerun()
 
             question_blocks = st.session_state.get(ocr_blocks_key, [])
             if not question_blocks:
@@ -1145,6 +1168,7 @@ def render_student_checker_page(topic: str) -> None:
                 checked_count = 0
                 saved_count = 0
                 saved_question_labels: list[str] = []
+                pending_rows: list[dict] = []
 
                 for index, _block in enumerate(question_blocks, start=1):
                     include_key = f"ocr_include_{slug}_{index}"
@@ -1197,17 +1221,21 @@ def render_student_checker_page(topic: str) -> None:
                         saved_count += 1
                         saved_question_labels.append(f"Question {index}")
                     else:
-                        st.error(f"Could not save Question {index} to history. The earlier questions were already checked.")
+                        pending_rows.append(new_row)
+                        st.error(f"Could not save Question {index} to history right now. It was kept in a retry queue.")
 
                 if checked_count == 0:
                     st.warning("Pick at least one question to check.")
-                elif saved_count:
-                    st.session_state[ocr_saved_notice_key] = (
-                        f"Saved {saved_count} checked question(s): {', '.join(saved_question_labels)}."
-                    )
-                    st.success(st.session_state[ocr_saved_notice_key])
                 else:
-                    st.warning("The questions were checked, but nothing could be saved yet. Please try again.")
+                    if pending_rows:
+                        st.session_state[ocr_pending_rows_key] = pending_rows
+                    if saved_count:
+                        st.session_state[ocr_saved_notice_key] = (
+                            f"Saved {saved_count} checked question(s): {', '.join(saved_question_labels)}."
+                        )
+                        st.success(st.session_state[ocr_saved_notice_key])
+                    if pending_rows:
+                        st.warning(f"{len(pending_rows)} question(s) still need to be saved. Use 'Retry Save Pending Questions' later.")
 
 def render_student_history_page() -> None:
     st.title("Your Performance History")
