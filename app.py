@@ -1278,6 +1278,9 @@ def render_student_history_page() -> None:
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
 
+    st.markdown("---")
+    render_teacher_student_chatbox(class_code, s_user, s_data)
+
 def render_assignment_card(assignment: pd.Series, assignment_type: str, completion_map: dict[tuple[str, str], dict]) -> None:
     assignment_id = str(assignment.get("assignment_id", "")).strip()
     title = str(assignment.get("title", "")).strip() or "Untitled"
@@ -1380,6 +1383,63 @@ def render_student_messages_page() -> None:
             if str(comment.get("created_at", "")).strip():
                 st.caption(f"Sent {comment.get('created_at')}")
 
+def render_teacher_student_chatbox(class_code: str, student_username: str, student_data: dict) -> None:
+    student_name = f"{student_data.get('first_name', student_username)} {student_data.get('last_name', '')}".strip()
+    student_display = f"{student_name} (@{student_username})".strip()
+
+    st.subheader(f"Private Chat: {student_display}")
+    st.caption("This private thread also appears in the student's Messages page.")
+
+    thread_df = get_teacher_comments_for_student(class_code, student_username)
+    thread_df = thread_df[
+        (thread_df["scope"].fillna("").astype(str).str.lower() == "student")
+        & (thread_df["username"].fillna("").astype(str).str.lower() == student_username.strip().lower())
+    ].copy()
+
+    if "created_at" in thread_df.columns and not thread_df.empty:
+        thread_df["_sort_key"] = pd.to_datetime(thread_df["created_at"], errors="coerce")
+        thread_df = thread_df.sort_values("_sort_key", kind="stable")
+
+    if thread_df.empty:
+        st.info("No private messages yet. Send the first one below.")
+    else:
+        for _, row in thread_df.iterrows():
+            created_at = str(row.get("created_at", "")).strip()
+            message_text = str(row.get("message", "")).strip()
+            topic = str(row.get("topic", "")).strip()
+            with st.chat_message("assistant"):
+                st.markdown(f"**Teacher**{f' · {created_at}' if created_at else ''}")
+                if topic:
+                    st.caption(f"Topic: {topic}")
+                st.write(message_text or " ")
+
+    with st.form(f"teacher_chat_form_{class_code}_{student_username}", clear_on_submit=True):
+        chat_topic = st.selectbox(
+            "Topic (optional)",
+            ["No topic"] + load_topics(class_code),
+            key=f"teacher_chat_topic_{class_code}_{student_username}",
+        )
+        chat_message = st.text_area("Write a message")
+        submitted = st.form_submit_button("Send message")
+
+    if submitted:
+        if not chat_message.strip():
+            st.warning("Write a message first.")
+        else:
+            row = {
+                "comment_id": make_record_id("comment"),
+                "class_code": class_code,
+                "scope": "student",
+                "username": student_username,
+                "topic": "" if chat_topic == "No topic" else chat_topic,
+                "message": chat_message.strip(),
+                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                "created_by": st.session_state.get("username", ""),
+            }
+            if save_teacher_comment(row):
+                st.success("Message sent.")
+                st.rerun()
+
 def render_teacher_assignments_and_comments(selected_code: str, teacher_classes: dict, student_accounts: dict, class_history_df: pd.DataFrame) -> None:
     topic_options = ["No topic"] + load_topics(selected_code)
     student_options = list(student_accounts.keys())
@@ -1481,36 +1541,21 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
             st.dataframe(targeted_df[["title", "username", "topic", "due_date"]], use_container_width=True, hide_index=True)
 
     with tab_comments:
-        st.caption("Leave feedback to the whole class or to one student individually.")
-        comment_scope = st.radio("Comment scope", ["Class", "Individual Student"], horizontal=True, key=f"comment_scope_{selected_code}")
+        st.caption("Leave a class-wide note for everyone in this classroom.")
         with st.form(f"teacher_comment_form_{selected_code}", clear_on_submit=True):
-            if student_options:
-                comment_student = st.selectbox(
-                    "Choose student",
-                    student_options,
-                    format_func=lambda x: f"{student_accounts[x].get('first_name', x)} (@{x})" if x in student_accounts else x,
-                    key=f"comment_student_{selected_code}",
-                    disabled=comment_scope != "Individual Student",
-                    help="Pick a student when you want the comment to appear only for them.",
-                )
-            else:
-                st.info("No students are in this class yet, so individual comments are unavailable for now.")
-                comment_student = ""
             comment_topic = st.selectbox("Topic (optional)", topic_options, key=f"comment_topic_{selected_code}")
-            comment_message = st.text_area("Comment")
+            comment_message = st.text_area("Class comment")
             submitted = st.form_submit_button("Send comment")
 
         if submitted:
             if not comment_message.strip():
                 st.warning("Write a comment first.")
-            elif comment_scope == "Individual Student" and not student_options:
-                st.warning("Add students to the class before sending an individual comment.")
             else:
                 row = {
                     "comment_id": make_record_id("comment"),
                     "class_code": selected_code,
-                    "scope": "student" if comment_scope == "Individual Student" else "class",
-                    "username": comment_student if (comment_scope == "Individual Student" and student_options) else "",
+                    "scope": "class",
+                    "username": "",
                     "topic": "" if comment_topic == "No topic" else comment_topic,
                     "message": comment_message.strip(),
                     "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
