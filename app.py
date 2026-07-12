@@ -8,6 +8,7 @@ import string
 import datetime
 import functools
 import uuid
+from zoneinfo import ZoneInfo
 from PIL import Image
 import pillow_heif
 import pandas as pd
@@ -24,6 +25,23 @@ st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 OCR_MAX_QUESTIONS = 5
+AST_TZ = ZoneInfo("Asia/Riyadh")
+
+def _now_ast() -> datetime.datetime:
+    return datetime.datetime.now(AST_TZ)
+
+def _format_ast_timestamp(dt: datetime.datetime | None = None) -> str:
+    dt = dt or _now_ast()
+    return dt.astimezone(AST_TZ).isoformat(timespec="seconds")
+
+def _parse_timestamp_to_utc(value) -> pd.Timestamp:
+    try:
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", utc=True)
+        if pd.isna(parsed):
+            return pd.NaT
+        return parsed
+    except Exception:
+        return pd.NaT
 
 @st.cache_resource(ttl=0)
 def get_gspread_client():
@@ -385,7 +403,7 @@ def record_category_usage(
 ) -> bool:
     class_code = (class_code or "").strip().lower() or "unassigned"
     category_name = normalize_category_name(category_name)
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
+    timestamp = _format_ast_timestamp()
 
     categories_df = load_categories_df()
     if categories_df.empty:
@@ -576,7 +594,7 @@ def get_private_message_thread(class_code: str, username: str) -> pd.DataFrame:
 
     if "created_at" in working_df.columns:
         working_df = working_df.copy()
-        working_df["_sort_key"] = pd.to_datetime(working_df["created_at"], errors="coerce")
+        working_df["_sort_key"] = working_df["created_at"].apply(_parse_timestamp_to_utc)
         working_df = working_df.sort_values("_sort_key", kind="stable")
     return working_df
 
@@ -687,7 +705,7 @@ def filter_history_by_status(history_df: pd.DataFrame, status_filter: str) -> pd
 
 def _safe_datetime_sort_key(value) -> int:
     try:
-        parsed = pd.to_datetime(str(value).strip(), errors="coerce", utc=True)
+        parsed = _parse_timestamp_to_utc(value)
         if pd.isna(parsed):
             return -1
         return int(parsed.value)
@@ -1235,7 +1253,7 @@ def render_student_checker_page(topic: str) -> None:
                             example_message=result.message,
                         )
 
-                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
+                    timestamp = _format_ast_timestamp()
                     numbered_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
                     new_row = {
                         "username": username,
@@ -1342,7 +1360,7 @@ def render_assignment_card(assignment: pd.Series, assignment_type: str, completi
                     "class_code": str(assignment.get("class_code", "")).strip().lower(),
                     "username": st.session_state.get("username", ""),
                     "status": "done",
-                    "completed_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                    "completed_at": _format_ast_timestamp(),
                     "title": title,
                     "topic": topic,
                     "due_date": due_date,
@@ -1442,7 +1460,7 @@ def render_student_messages_page() -> None:
                 "username": username,
                 "topic": "" if reply_topic == "No topic" else reply_topic,
                 "message": reply_message.strip(),
-                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                "created_at": _format_ast_timestamp(),
                 "created_by": username,
             }
             if save_teacher_comment(row):
@@ -1463,7 +1481,7 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
     ].copy()
 
     if "created_at" in thread_df.columns and not thread_df.empty:
-        thread_df["_sort_key"] = pd.to_datetime(thread_df["created_at"], errors="coerce")
+        thread_df["_sort_key"] = thread_df["created_at"].apply(_parse_timestamp_to_utc)
         thread_df = thread_df.sort_values("_sort_key", kind="stable")
 
     if thread_df.empty:
@@ -1502,7 +1520,7 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
                 "username": student_username,
                 "topic": "" if chat_topic == "No topic" else chat_topic,
                 "message": chat_message.strip(),
-                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                "created_at": _format_ast_timestamp(),
                 "created_by": st.session_state.get("username", ""),
             }
             if save_teacher_comment(row):
@@ -1540,7 +1558,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "attachment_type": "link" if attachment_link.strip() else "",
                     "attachment_link": attachment_link.strip(),
                     "attachment_b64": "",
-                    "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                    "created_at": _format_ast_timestamp(),
                     "created_by": st.session_state.get("username", ""),
                 }
                 if save_class_assignment(row):
@@ -1594,7 +1612,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                         "attachment_type": "link" if attachment_link.strip() else "",
                         "attachment_link": attachment_link.strip(),
                         "attachment_b64": "",
-                        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                        "created_at": _format_ast_timestamp(),
                         "created_by": st.session_state.get("username", ""),
                     }
                     if save_targeted_practice(row):
@@ -1627,7 +1645,7 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "username": "",
                     "topic": "" if comment_topic == "No topic" else comment_topic,
                     "message": comment_message.strip(),
-                    "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                    "created_at": _format_ast_timestamp(),
                     "created_by": st.session_state.get("username", ""),
                 }
                 if save_teacher_comment(row):
