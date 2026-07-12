@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import base64
 import os
+import re
 import random
 import string
 import datetime
@@ -21,6 +22,7 @@ from App.checker import detect_first_error
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
+OCR_MAX_QUESTIONS = 5
 
 @st.cache_resource(ttl=0)
 def get_gspread_client():
@@ -994,14 +996,59 @@ def get_current_user_profile() -> dict:
 def _topic_slug(topic: str) -> str:
     return topic.lower().replace(" ", "_").replace("&", "and")
 
+def split_ocr_questions(extracted_text: str) -> list[str]:
+    text = (extracted_text or "").replace("\r\n", "\n").strip()
+    if not text:
+        return []
+
+    question_header = re.compile(r"(?im)^\s*(?:={2,}\s*)?(?:question|q)\s*\d+\s*(?:[:\-]\s*)?(?:={2,})?\s*$")
+    lines = text.split("\n")
+    blocks: list[str] = []
+    current: list[str] = []
+    saw_question_header = False
+
+    for line in lines:
+        if question_header.match(line.strip()):
+            saw_question_header = True
+            if current:
+                blocks.append("\n".join(current).strip())
+                current = []
+            continue
+        current.append(line)
+
+    if current:
+        blocks.append("\n".join(current).strip())
+
+    if not saw_question_header:
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+        blocks = paragraphs if len(paragraphs) > 1 else [text]
+
+    cleaned_blocks: list[str] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
+        if lines:
+            cleaned_blocks.append("\n".join(lines))
+
+    return cleaned_blocks[:OCR_MAX_QUESTIONS]
+
+def reset_ocr_state(slug: str) -> None:
+    st.session_state[f"ocr_text_{slug}"] = ""
+    st.session_state[f"ocr_ready_{slug}"] = False
+    st.session_state[f"ocr_blocks_{slug}"] = []
+    for index in range(1, OCR_MAX_QUESTIONS + 1):
+        st.session_state.pop(f"ocr_include_{slug}_{index}", None)
+        st.session_state.pop(f"ocr_question_text_{slug}_{index}", None)
+
 def render_student_checker_page(topic: str) -> None:
     slug = _topic_slug(topic)
     last_file_key = f"last_uploaded_file_{slug}"
     ocr_text_key = f"ocr_text_{slug}"
     ocr_ready_key = f"ocr_ready_{slug}"
+    ocr_blocks_key = f"ocr_blocks_{slug}"
 
     st.session_state.setdefault(ocr_text_key, "")
     st.session_state.setdefault(ocr_ready_key, False)
+    st.session_state.setdefault(ocr_blocks_key, [])
 
     st.title("V.I.C.T.O.R")
     st.subheader(f"{topic} — Upload your steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
@@ -1011,8 +1058,7 @@ def render_student_checker_page(topic: str) -> None:
         current_file_name = uploaded_file.name
         if st.session_state.get(last_file_key) != current_file_name:
             st.session_state[last_file_key] = current_file_name
-            st.session_state[ocr_text_key] = ""
-            st.session_state[ocr_ready_key] = False
+            reset_ocr_state(slug)
 
         if st.button("Run OCR", key=f"run_ocr_{slug}"):
             with st.spinner('Analyzing handwriting and verifying steps...'):
@@ -1028,8 +1074,14 @@ def render_student_checker_page(topic: str) -> None:
 
                     extracted_text = clean_image("temp_image.png").strip()
                     st.session_state[ocr_text_key] = extracted_text
+                    question_blocks = split_ocr_questions(extracted_text)
+                    if extracted_text and not question_blocks:
+                        question_blocks = [extracted_text]
+                    st.session_state[ocr_blocks_key] = question_blocks
                     if extracted_text:
                         st.session_state[ocr_ready_key] = True
+                        if len(question_blocks) == 1 and question_blocks[0] == extracted_text:
+                            st.warning("OCR found text, but it could not split it into separate questions yet. You can still edit the text below.")
                     else:
                         st.session_state[ocr_ready_key] = False
                         st.warning("No text could be read from that image. Try a clearer photo.")
@@ -1037,23 +1089,57 @@ def render_student_checker_page(topic: str) -> None:
                     st.error("The AI service is experiencing heavy traffic. Please try again.")
 
         if st.session_state[ocr_ready_key]:
-            st.info("Review the OCR text below and fix any symbol mistakes before checking.")
-            st.text_area("Extracted Steps:", key=ocr_text_key, height=240)
+            st.info("Review each OCR question below, fix any symbol mistakes, and tick the ones you want checked.")
 
-            if st.button("Confirm OCR and Check", key=f"confirm_{slug}"):
-                steps = [s.strip() for s in st.session_state[ocr_text_key].splitlines() if s.strip()]
-                if not steps:
-                    st.warning("Please review or correct the OCR text first.")
-                else:
-                    known_categories = get_categories_for_class(user_profile.get("class_code", ""))
+            question_blocks = st.session_state.get(ocr_blocks_key, [])
+            if not question_blocks:
+                question_blocks = split_ocr_questions(st.session_state.get(ocr_text_key, ""))
+                st.session_state[ocr_blocks_key] = question_blocks
+
+            for index, block in enumerate(question_blocks, start=1):
+                include_key = f"ocr_include_{slug}_{index}"
+                text_key = f"ocr_question_text_{slug}_{index}"
+                st.session_state.setdefault(include_key, True)
+                if text_key not in st.session_state:
+                    st.session_state[text_key] = block
+
+                with st.container(border=True):
+                    st.checkbox(f"Check Question {index}", key=include_key)
+                    st.text_area(
+                        f"Question {index} OCR text",
+                        key=text_key,
+                        height=180,
+                        help="Edit this question if OCR confused any symbols before checking it.",
+                    )
+
+            if st.button("Confirm OCR and Check Selected Questions", key=f"confirm_{slug}"):
+                known_categories = get_categories_for_class(user_profile.get("class_code", ""))
+                history_df = load_history_df()
+                new_logs = []
+                checked_count = 0
+
+                for index, _block in enumerate(question_blocks, start=1):
+                    include_key = f"ocr_include_{slug}_{index}"
+                    text_key = f"ocr_question_text_{slug}_{index}"
+                    if not st.session_state.get(include_key, True):
+                        continue
+
+                    raw_question = str(st.session_state.get(text_key, "")).strip()
+                    steps = [s.strip() for s in raw_question.splitlines() if s.strip()]
+                    if not steps:
+                        st.warning(f"Question {index} is empty, so it was skipped.")
+                        continue
+
                     result = detect_first_error(
                         steps,
                         class_code=user_profile.get("class_code", ""),
                         known_categories=known_categories,
                     )
+                    checked_count += 1
                     status_str = "Passed" if result.passed else "Failed"
                     error_category_str = "N/A"
 
+                    st.markdown(f"#### Question {index}")
                     if result.passed:
                         st.success(f"Passed: {result.message}")
                     else:
@@ -1067,17 +1153,25 @@ def render_student_checker_page(topic: str) -> None:
                         )
 
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
-                    history_df = load_history_df()
                     numbered_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
+                    new_logs.append({
+                        "username": username,
+                        "class_code": user_profile.get("class_code", ""),
+                        "date": timestamp,
+                        "equation": f"Question {index}\n{numbered_steps}",
+                        "status": status_str,
+                        "message": result.message,
+                        "error_category": error_category_str,
+                        "topic": topic,
+                    })
 
-                    new_log = pd.DataFrame([{
-                        'username': username, 'class_code': user_profile.get("class_code", ""), 'date': timestamp, 'equation': numbered_steps,
-                        'status': status_str, 'message': result.message, 'error_category': error_category_str,
-                        'topic': topic,
-                    }])
-
-                    updated_history = pd.concat([history_df, new_log], ignore_index=True)
+                if checked_count == 0:
+                    st.warning("Pick at least one question to check.")
+                elif new_logs:
+                    updated_history = pd.concat([history_df, pd.DataFrame(new_logs)], ignore_index=True)
                     save_dataframe_to_worksheet("History", updated_history, HISTORY_COLS)
+                    st.success(f"Checked {checked_count} question(s).")
+                    st.rerun()
 
 def render_student_history_page() -> None:
     st.title("Your Performance History")

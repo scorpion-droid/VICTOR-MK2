@@ -20,11 +20,22 @@ CRITICAL RULES:
 2. Do NOT change the numbers to make the math "correct".
 3. If the handwritten steps contain bad math, broken math, or illogical logic, you MUST transcribe that exact bad math.
 4. Output EXACTLY what is written on the page, row by row.
+5. If there is more than one question on the page, separate them clearly:
+   - Put a line that says QUESTION 1 before the first question.
+   - Put a line that says QUESTION 2 before the second question.
+   - Continue up to QUESTION 5.
+   - Leave one blank line between questions.
+6. Never invent extra questions. If fewer than 5 are visible, only output the ones that exist.
 
 Output format example:
+QUESTION 1
 line 1
 line 2
 line 3
+
+QUESTION 2
+line 1
+line 2
 
 Do not include any conversational text or markdown code fences."""
 
