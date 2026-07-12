@@ -559,6 +559,27 @@ def get_teacher_comments_for_class(class_code: str) -> pd.DataFrame:
     class_code = (class_code or "").strip().lower()
     return working_df[working_df["class_code"] == class_code]
 
+def get_private_message_thread(class_code: str, username: str) -> pd.DataFrame:
+    comments_df = get_teacher_comments_for_student(class_code, username)
+    if comments_df.empty:
+        return pd.DataFrame(columns=TEACHER_COMMENT_COLS)
+
+    working_df = comments_df.copy()
+    if "scope" in working_df.columns and "username" in working_df.columns:
+        working_df = working_df[
+            (working_df["scope"].fillna("").astype(str).str.lower() == "student")
+            & (working_df["username"].fillna("").astype(str).str.lower() == (username or "").strip().lower())
+        ]
+
+    if working_df.empty:
+        return pd.DataFrame(columns=TEACHER_COMMENT_COLS)
+
+    if "created_at" in working_df.columns:
+        working_df = working_df.copy()
+        working_df["_sort_key"] = pd.to_datetime(working_df["created_at"], errors="coerce")
+        working_df = working_df.sort_values("_sort_key", kind="stable")
+    return working_df
+
 def save_class_assignment(row: dict) -> bool:
     df = pd.DataFrame([row])
     return upsert_dataframe_to_worksheet("ClassAssignments", df, CLASS_ASSIGNMENT_COLS, ["assignment_id"])
@@ -1362,23 +1383,71 @@ def render_student_messages_page() -> None:
     st.title("Messages")
     class_code = user_profile.get("class_code", "")
     comments_df = get_teacher_comments_for_student(class_code, username)
+    private_thread_df = get_private_message_thread(class_code, username)
+    class_comments_df = pd.DataFrame(columns=TEACHER_COMMENT_COLS)
+    if not comments_df.empty:
+        class_comments_df = comments_df[
+            comments_df["scope"].fillna("").astype(str).str.lower() == "class"
+        ].copy()
 
-    if comments_df.empty:
-        st.info("No teacher comments yet.")
-        return
+    st.subheader("Class Updates")
+    if class_comments_df.empty:
+        st.info("No class comments yet.")
+    else:
+        if "created_at" in class_comments_df.columns:
+            class_comments_df = class_comments_df.sort_values("created_at")
+        for _, comment in class_comments_df.iloc[::-1].iterrows():
+            topic = str(comment.get("topic", "")).strip()
+            with st.container(border=True):
+                st.caption("Class comment" + (f" | Topic: {topic}" if topic else ""))
+                st.markdown(str(comment.get("message", "")).strip())
+                if str(comment.get("created_at", "")).strip():
+                    st.caption(f"Sent {comment.get('created_at')}")
 
-    comments_df = comments_df.copy()
-    if "created_at" in comments_df.columns:
-        comments_df = comments_df.sort_values("created_at")
+    st.markdown("---")
+    st.subheader("Private Chat")
+    if private_thread_df.empty:
+        st.info("No private messages yet. Your teacher can start the chat first, or you can reply once there is a thread.")
+    else:
+        for _, row in private_thread_df.iterrows():
+            sender = str(row.get("created_by", "")).strip().lower()
+            sender_name = "You" if sender == username.strip().lower() else "Teacher"
+            created_at = str(row.get("created_at", "")).strip()
+            topic = str(row.get("topic", "")).strip()
+            message_text = str(row.get("message", "")).strip()
+            bubble_role = "user" if sender == username.strip().lower() else "assistant"
+            with st.chat_message(bubble_role):
+                st.markdown(f"**{sender_name}**{f' · {created_at}' if created_at else ''}")
+                if topic:
+                    st.caption(f"Topic: {topic}")
+                st.write(message_text or " ")
 
-    for _, comment in comments_df.iloc[::-1].iterrows():
-        scope = str(comment.get("scope", "class")).strip().title()
-        topic = str(comment.get("topic", "")).strip()
-        with st.container(border=True):
-            st.caption(f"{scope} comment" + (f" | Topic: {topic}" if topic else ""))
-            st.markdown(str(comment.get("message", "")).strip())
-            if str(comment.get("created_at", "")).strip():
-                st.caption(f"Sent {comment.get('created_at')}")
+    with st.form(f"student_reply_form_{class_code}_{username}", clear_on_submit=True):
+        reply_topic = st.selectbox(
+            "Topic (optional)",
+            ["No topic"] + load_topics(class_code),
+            key=f"student_reply_topic_{class_code}_{username}",
+        )
+        reply_message = st.text_area("Write a reply")
+        submitted = st.form_submit_button("Send Reply")
+
+    if submitted:
+        if not reply_message.strip():
+            st.warning("Write a reply first.")
+        else:
+            row = {
+                "comment_id": make_record_id("comment"),
+                "class_code": class_code,
+                "scope": "student",
+                "username": username,
+                "topic": "" if reply_topic == "No topic" else reply_topic,
+                "message": reply_message.strip(),
+                "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
+                "created_by": username,
+            }
+            if save_teacher_comment(row):
+                st.success("Reply sent.")
+                st.rerun()
 
 def render_teacher_student_chatbox(class_code: str, student_username: str, student_data: dict) -> None:
     student_name = f"{student_data.get('first_name', student_username)} {student_data.get('last_name', '')}".strip()
@@ -1404,8 +1473,11 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
             created_at = str(row.get("created_at", "")).strip()
             message_text = str(row.get("message", "")).strip()
             topic = str(row.get("topic", "")).strip()
-            with st.chat_message("assistant"):
-                st.markdown(f"**Teacher**{f' · {created_at}' if created_at else ''}")
+            sender = str(row.get("created_by", "")).strip().lower()
+            bubble_role = "assistant" if sender != student_username.strip().lower() else "user"
+            sender_label = "Teacher" if bubble_role == "assistant" else student_data.get("first_name", student_username) or student_username
+            with st.chat_message(bubble_role):
+                st.markdown(f"**{sender_label}**{f' · {created_at}' if created_at else ''}")
                 if topic:
                     st.caption(f"Topic: {topic}")
                 st.write(message_text or " ")
