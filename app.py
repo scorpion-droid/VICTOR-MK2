@@ -1457,6 +1457,9 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
             st.metric("Failed", int((filtered_df["status"] == "Failed").sum()))
 
     st.markdown("---")
+    render_trend_and_prediction(f"{student_name} Growth Trend", s_history_df, topic_filter, status_filter)
+
+    st.markdown("---")
     if filtered_df.empty:
         st.info(f"{student_name} hasn't scanned any math problems yet.")
     else:
@@ -1469,9 +1472,6 @@ def render_student_detail_for_teacher(s_user: str, s_data: dict, class_history_d
                 passed=item["status"] == "Passed",
                 header_text=f"Topic: {item.get('topic', 'Unspecified') or 'Unspecified'}",
             )
-
-    st.markdown("---")
-    render_trend_and_prediction(f"{student_name} Growth Trend", s_history_df, topic_filter, status_filter)
 
 def render_teacher_detail() -> None:
     global teacher_dashboard_page
@@ -1603,21 +1603,14 @@ def render_teacher_detail() -> None:
         else:
             topic_filtered_df = class_history_df
 
-        st.subheader("Overall Class Errors")
-        overall_error_counts = summarize_history(class_history_df)
-        if overall_error_counts:
-            st.bar_chart(overall_error_counts)
-        else:
-            st.info("No class errors recorded yet.")
-
-        st.markdown("---")
-        render_trend_and_prediction(f"Topic Growth Trend — {concept_topic_filter}", class_history_df, concept_topic_filter, "All")
-
         render_analytics_panel(
             f"Classroom Misconception Breakdown — {concept_topic_filter}",
             topic_filtered_df,
             "Zero student errors recorded for this topic yet."
         )
+
+        st.markdown("---")
+        render_trend_and_prediction(f"Topic Growth Trend — {concept_topic_filter}", class_history_df, concept_topic_filter, "All")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("Logout", use_container_width=True):
