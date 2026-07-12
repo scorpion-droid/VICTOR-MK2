@@ -2017,7 +2017,11 @@ if auth_status:
         messages_page = st.Page(render_student_messages_page, title="Messages", url_path="messages")
         history_page = st.Page(render_student_history_page, title="My Performance History", url_path="history")
 
-        current_page = st.navigation(topic_pages + [targeted_practice_page, assignments_page, messages_page, history_page])
+        student_pages = {
+            "Topics": topic_pages,
+            "Student Tools": [targeted_practice_page, assignments_page, messages_page, history_page],
+        }
+        current_page = st.navigation(student_pages, position="sidebar", expanded=False)
         current_page.run()
 
 elif auth_status is False:
