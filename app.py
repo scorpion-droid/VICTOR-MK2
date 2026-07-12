@@ -24,7 +24,6 @@ st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 OCR_MAX_QUESTIONS = 5
-NOTIFICATION_COLS = ["username", "class_code", "area", "last_seen_at", "updated_at"]
 
 @st.cache_resource(ttl=0)
 def get_gspread_client():
@@ -641,133 +640,6 @@ def save_assignment_completion(row: dict) -> bool:
     df = pd.DataFrame([normalized_row])
     return upsert_dataframe_to_worksheet("AssignmentStatus", df, ASSIGNMENT_STATUS_COLS, ["assignment_id", "username"])
 
-def load_notification_state_df() -> pd.DataFrame:
-    fallback = st.session_state.get("_last_good_notification_state_df", pd.DataFrame(columns=NOTIFICATION_COLS))
-    try:
-        if gc and SPREADSHEET_ID:
-            sh = gc.open_by_key(SPREADSHEET_ID)
-            worksheet = _get_or_create_worksheet(sh, "NotificationState", NOTIFICATION_COLS)
-            records = worksheet.get_all_records()
-            df = pd.DataFrame(records) if records else pd.DataFrame(columns=NOTIFICATION_COLS)
-        else:
-            df = pd.DataFrame(columns=NOTIFICATION_COLS)
-    except Exception:
-        return fallback
-
-    if df is not None and not df.empty:
-        st.session_state["_last_good_notification_state_df"] = df
-        return df
-    return fallback
-
-def _clean_notification_timestamp(value) -> pd.Timestamp:
-    text = _clean_sheet_value(value)
-    if not text:
-        return pd.NaT
-    text = re.sub(r"(\d{2})-(\d{2})$", r"\1:\2", text)
-    return pd.to_datetime(text, errors="coerce")
-
-def get_notification_last_seen(username: str, class_code: str, area: str) -> pd.Timestamp:
-    notifications_df = load_notification_state_df()
-    if notifications_df.empty:
-        return pd.NaT
-
-    working_df = notifications_df.copy()
-    for col in ("username", "class_code", "area", "last_seen_at"):
-        if col in working_df.columns:
-            working_df[col] = working_df[col].fillna("").astype(str).str.strip()
-
-    username = (username or "").strip().lower()
-    class_code = (class_code or "").strip().lower()
-    area = (area or "").strip().lower()
-
-    match = working_df[
-        (working_df["username"].str.lower() == username)
-        & (working_df["class_code"].str.lower() == class_code)
-        & (working_df["area"].str.lower() == area)
-    ]
-    if match.empty:
-        return pd.NaT
-    return _clean_notification_timestamp(match.iloc[0].get("last_seen_at", ""))
-
-def set_notification_last_seen(username: str, class_code: str, area: str) -> bool:
-    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
-    notifications_df = load_notification_state_df()
-    if notifications_df.empty:
-        notifications_df = pd.DataFrame(columns=NOTIFICATION_COLS)
-
-    working_df = notifications_df.copy()
-    for col in NOTIFICATION_COLS:
-        if col not in working_df.columns:
-            working_df[col] = ""
-
-    username = (username or "").strip().lower()
-    class_code = (class_code or "").strip().lower()
-    area = (area or "").strip().lower()
-
-    match_mask = (
-        (working_df["username"].fillna("").astype(str).str.lower() == username)
-        & (working_df["class_code"].fillna("").astype(str).str.lower() == class_code)
-        & (working_df["area"].fillna("").astype(str).str.lower() == area)
-    )
-
-    row = {
-        "username": username,
-        "class_code": class_code,
-        "area": area,
-        "last_seen_at": timestamp,
-        "updated_at": timestamp,
-    }
-
-    if match_mask.any():
-        idx = working_df.index[match_mask][0]
-        for key, value in row.items():
-            working_df.at[idx, key] = value
-    else:
-        working_df = pd.concat([working_df, pd.DataFrame([row])], ignore_index=True)
-
-    return replace_dataframe_in_worksheet("NotificationState", working_df, NOTIFICATION_COLS)
-
-def _count_rows_newer_than(df: pd.DataFrame, timestamp: pd.Timestamp, created_col: str = "created_at") -> int:
-    if df.empty or created_col not in df.columns:
-        return 0
-    if pd.isna(timestamp):
-        return int(len(df))
-    working_df = df.copy()
-    working_df["_created_ts"] = working_df[created_col].apply(_clean_notification_timestamp)
-    return int((working_df["_created_ts"] > timestamp).sum())
-
-def badge_label(label: str, count: int) -> str:
-    count = int(count or 0)
-    return f"{label} ● {count}" if count > 0 else label
-
-def get_student_notification_counts(class_code: str, username: str) -> dict[str, int]:
-    class_code = (class_code or "").strip().lower()
-    username = (username or "").strip().lower()
-
-    targeted_df = get_targeted_practice_for_student(class_code, username)
-    assignments_df = get_teacher_assignments_for_class(class_code)
-    comments_df = get_teacher_comments_for_student(class_code, username)
-
-    targeted_seen = get_notification_last_seen(username, class_code, "targeted_practice")
-    assignments_seen = get_notification_last_seen(username, class_code, "class_assignments")
-    messages_seen = get_notification_last_seen(username, class_code, "messages")
-
-    return {
-        "targeted_practice": _count_rows_newer_than(targeted_df, targeted_seen),
-        "class_assignments": _count_rows_newer_than(assignments_df, assignments_seen),
-        "messages": _count_rows_newer_than(comments_df, messages_seen),
-    }
-
-def get_teacher_notification_count(class_code: str, teacher_username: str) -> int:
-    class_code = (class_code or "").strip().lower()
-    teacher_username = (teacher_username or "").strip().lower()
-    history_df = load_history_df()
-    if history_df.empty:
-        return 0
-
-    class_history_df = history_df[history_df["class_code"].fillna("").astype(str).str.lower() == class_code]
-    seen_at = get_notification_last_seen(teacher_username, class_code, "teacher_dashboard")
-    return _count_rows_newer_than(class_history_df, seen_at, created_col="date")
 
 def summarize_topic_counts(history_df: pd.DataFrame) -> pd.DataFrame:
     if history_df.empty or "topic" not in history_df.columns:
@@ -1463,7 +1335,6 @@ def render_student_targeted_practice_page() -> None:
     class_code = user_profile.get("class_code", "")
     username_lc = username.strip().lower()
     completion_map = get_assignment_completion_map()
-    set_notification_last_seen(username_lc, class_code, "targeted_practice")
     targeted_practice = get_targeted_practice_for_student(class_code, username_lc)
 
     if targeted_practice.empty:
@@ -1478,7 +1349,6 @@ def render_student_class_assignments_page() -> None:
     st.title("Class Assignments")
     class_code = user_profile.get("class_code", "")
     completion_map = get_assignment_completion_map()
-    set_notification_last_seen(username.strip().lower(), class_code, "class_assignments")
     class_assignments = get_teacher_assignments_for_class(class_code)
 
     if class_assignments.empty:
@@ -1491,7 +1361,6 @@ def render_student_class_assignments_page() -> None:
 def render_student_messages_page() -> None:
     st.title("Messages")
     class_code = user_profile.get("class_code", "")
-    set_notification_last_seen(username.strip().lower(), class_code, "messages")
     comments_df = get_teacher_comments_for_student(class_code, username)
 
     if comments_df.empty:
@@ -1673,7 +1542,6 @@ def render_teacher_dashboard() -> None:
 
     user_profile = get_current_user_profile()
     teacher_classes = user_profile.get("classes", {})
-    teacher_username = st.session_state.get("username", "")
 
     with st.sidebar.expander("Create a New Class", expanded=False):
         new_class_name = st.text_input("Class Name (e.g., Calculus Level 2):")
@@ -1729,13 +1597,6 @@ def render_teacher_dashboard() -> None:
         st.info("Welcome! Open the left sidebar panel to create your first classroom section and get your enrollment code.")
         return
 
-    dashboard_new_count = sum(
-        get_teacher_notification_count(class_code, teacher_username)
-        for class_code in teacher_classes.keys()
-    )
-    if dashboard_new_count > 0:
-        st.caption(f":red[● {dashboard_new_count} new student uploads since your last visit.]")
-
     st.subheader("Your Classrooms")
     st.caption("Click a classroom card to open its detailed view.")
     history_df = load_history_df()
@@ -1782,9 +1643,6 @@ def render_teacher_dashboard() -> None:
                     st.session_state["selected_class_code"] = class_code
                     st.session_state.pop("selected_student_username", None)
                     st.switch_page(teacher_detail_page)
-
-    for class_code in teacher_classes.keys():
-        set_notification_last_seen(teacher_username, class_code, "teacher_dashboard")
 
     st.sidebar.markdown("---")
     if st.sidebar.button("Logout", use_container_width=True):
@@ -1852,7 +1710,6 @@ def render_teacher_detail() -> None:
     user_profile = get_current_user_profile()
     teacher_classes = user_profile.get("classes", {})
     selected_code = st.session_state.get("selected_class_code")
-    teacher_username = st.session_state.get("username", "")
 
     if not selected_code or selected_code not in teacher_classes:
         st.warning("Pick a classroom from the teacher dashboard first.")
@@ -1866,11 +1723,8 @@ def render_teacher_detail() -> None:
         if data.get("role") == "student" and data.get("class_code") == selected_code
     }
     class_history_df = filter_history_for_class(history_df, selected_code, list(student_accounts.keys()))
-    class_new_count = get_teacher_notification_count(selected_code, teacher_username)
 
     st.title(f"{teacher_classes[selected_code]} ({selected_code})")
-    if class_new_count > 0:
-        st.caption(f":red[● {class_new_count} new student uploads since your last visit.]")
     st.caption("Detailed class view")
 
     if st.button("Back to Dashboard"):
@@ -1997,8 +1851,6 @@ def render_teacher_detail() -> None:
             st.session_state.pop(key, None)
         st.switch_page("app.py")
 
-    set_notification_last_seen(teacher_username, selected_code, "teacher_dashboard")
-
 auth_status = st.session_state.get("authentication_status")
 
 if auth_status:
@@ -2024,30 +1876,15 @@ if auth_status:
         student_topic_pages_by_slug = {}
         authenticator.logout('Logout', 'sidebar')
 
-        student_class_code = user_profile.get("class_code", "")
-        student_notification_counts = get_student_notification_counts(student_class_code, username)
-
         topic_pages = []
-        for topic in load_topics(student_class_code):
+        for topic in load_topics(user_profile.get("class_code", "")):
             page = st.Page(functools.partial(render_student_checker_page, topic), title=topic, url_path=_topic_slug(topic))
             topic_pages.append(page)
             student_topic_pages_by_slug[_topic_slug(topic)] = page
 
-        targeted_practice_page = st.Page(
-            render_student_targeted_practice_page,
-            title=badge_label("Targeted Practice", student_notification_counts["targeted_practice"]),
-            url_path="targeted-practice",
-        )
-        assignments_page = st.Page(
-            render_student_class_assignments_page,
-            title=badge_label("Class Assignments", student_notification_counts["class_assignments"]),
-            url_path="assignments",
-        )
-        messages_page = st.Page(
-            render_student_messages_page,
-            title=badge_label("Messages", student_notification_counts["messages"]),
-            url_path="messages",
-        )
+        targeted_practice_page = st.Page(render_student_targeted_practice_page, title="Targeted Practice", url_path="targeted-practice")
+        assignments_page = st.Page(render_student_class_assignments_page, title="Class Assignments", url_path="assignments")
+        messages_page = st.Page(render_student_messages_page, title="Messages", url_path="messages")
         history_page = st.Page(render_student_history_page, title="My Performance History", url_path="history")
 
         current_page = st.navigation(topic_pages + [targeted_practice_page, assignments_page, messages_page, history_page])
