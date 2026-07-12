@@ -404,18 +404,18 @@ def filter_history_for_class(history_df: pd.DataFrame, class_code: str, student_
     class_code = (class_code or "").strip().lower()
     working_df = history_df.copy()
 
+    class_mask = pd.Series(False, index=working_df.index)
     if "class_code" in working_df.columns:
-        working_df["class_code"] = working_df["class_code"].fillna("").astype(str).str.lower()
-        class_df = working_df[working_df["class_code"] == class_code]
-        if not class_df.empty:
-            return class_df
+        class_mask = working_df["class_code"].fillna("").astype(str).str.lower() == class_code
 
+    username_mask = pd.Series(False, index=working_df.index)
     if "username" in working_df.columns:
-        username_df = working_df[working_df["username"].isin(student_usernames)]
-        if not username_df.empty:
-            return username_df
+        username_mask = working_df["username"].isin(student_usernames)
 
-    return pd.DataFrame(columns=HISTORY_COLS)
+    combined = working_df[class_mask | username_mask]
+    if combined.empty:
+        return pd.DataFrame(columns=HISTORY_COLS)
+    return combined.drop_duplicates()
 
 def make_record_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
@@ -564,13 +564,14 @@ def filter_history_by_status(history_df: pd.DataFrame, status_filter: str) -> pd
         return history_df[history_df["status"] == "Failed"]
     return history_df.copy()
 
-def _safe_parse_datetime_value(value):
-    if pd.isna(value):
-        return pd.NaT
+def _safe_datetime_sort_key(value) -> int:
     try:
-        return pd.to_datetime(str(value).strip(), errors="coerce")
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce", utc=True)
+        if pd.isna(parsed):
+            return -1
+        return int(parsed.value)
     except Exception:
-        return pd.NaT
+        return -1
 
 def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "All") -> pd.DataFrame:
     if history_df.empty:
@@ -582,9 +583,9 @@ def build_cumulative_trend_df(history_df: pd.DataFrame, status_filter: str = "Al
         return pd.DataFrame(columns=["attempt_index", "cumulative_pass_rate", "passed"])
 
     if "date" in working_df.columns:
-        working_df["parsed_date"] = working_df["date"].apply(_safe_parse_datetime_value)
-        if working_df["parsed_date"].notna().any():
-            working_df = working_df.sort_values(["parsed_date"], kind="stable")
+        working_df["_trend_sort_key"] = working_df["date"].apply(_safe_datetime_sort_key)
+        if (working_df["_trend_sort_key"] >= 0).any():
+            working_df = working_df.sort_values(["_trend_sort_key"], kind="stable")
         else:
             working_df = working_df.reset_index(drop=True)
     else:
@@ -631,6 +632,14 @@ def get_growth_prediction(history_df: pd.DataFrame, topic_filter: str, status_fi
     attempts = len(recent)
     latest_status = recent["status"].iloc[-1]
 
+    # Cache keyed on the actual computed stats, not on call site or widget
+    # state, so this only calls Gemini again when the underlying data has
+    # genuinely changed rather than on every unrelated rerun/click.
+    cache_key = f"prediction_cache:{topic_filter}:{status_filter}:{attempts}:{start_rate:.1f}:{end_rate:.1f}:{latest_status}"
+    cached = st.session_state.get(cache_key)
+    if cached:
+        return cached
+
     prompt = f"""
     You are helping a teacher interpret a student's math progress.
 
@@ -647,23 +656,33 @@ def get_growth_prediction(history_df: pd.DataFrame, topic_filter: str, status_fi
     client = get_gemini_client()
     if client is None:
         if gain > 8:
-            return f"This student is improving quickly in {topic_filter}. If this pattern continues, mastery looks likely soon."
-        if gain < -8:
-            return f"This student may be struggling more in {topic_filter} recently, so the next check could still be shaky."
-        return f"This student looks fairly steady in {topic_filter}; the next result will likely depend on whether the current pattern continues."
+            result = f"This student is improving quickly in {topic_filter}. If this pattern continues, mastery looks likely soon."
+        elif gain < -8:
+            result = f"This student may be struggling more in {topic_filter} recently, so the next check could still be shaky."
+        else:
+            result = f"This student looks fairly steady in {topic_filter}; the next result will likely depend on whether the current pattern continues."
+        st.session_state[cache_key] = result
+        return result
 
     try:
         response = client.models.generate_content(
             model="gemini-3.1-flash-lite",
             contents=prompt,
         )
-        return response.text.strip()
+        result = response.text.strip()
     except Exception:
-        return f"This student looks steady in {topic_filter}, but there isn't enough stable trend data for a strong prediction yet."
+        result = f"This student looks steady in {topic_filter}, but there isn't enough stable trend data for a strong prediction yet."
+
+    st.session_state[cache_key] = result
+    return result
 
 def render_trend_and_prediction(title: str, history_df: pd.DataFrame, topic_filter: str = "All Topics", status_filter: str = "All") -> None:
     st.subheader(title)
-    trend_df = build_topic_trend_df(history_df, topic_filter, status_filter)
+    try:
+        trend_df = build_topic_trend_df(history_df, topic_filter, status_filter)
+    except Exception:
+        st.info("Not enough clean submission dates yet to draw a trend.")
+        return
     if trend_df.empty:
         st.info("Not enough submissions yet to draw a trend.")
         return
@@ -1147,15 +1166,13 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
             topic = st.selectbox("Topic", topic_options, key=f"class_assignment_topic_{selected_code}")
             due_date = st.date_input("Due date")
             instructions = st.text_area("Instructions")
-            attachment_link = st.text_input("Attachment link (optional)")
-            attachment_file = st.file_uploader("Or upload an image (optional)", type=["png", "jpg", "jpeg", "webp", "heic", "heif"], key=f"class_assignment_upload_{selected_code}")
+            attachment_link = st.text_input("Attachment link (e.g. a Google Drive link)")
             submitted = st.form_submit_button("Publish class assignment")
 
         if submitted:
             if not title.strip():
                 st.warning("Please add a title first.")
             else:
-                attachment_type, attachment_b64 = encode_uploaded_file(attachment_file)
                 row = {
                     "assignment_id": make_record_id("class"),
                     "class_code": selected_code,
@@ -1163,9 +1180,9 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                     "title": title.strip(),
                     "instructions": instructions.strip(),
                     "due_date": str(due_date),
-                    "attachment_type": attachment_type if attachment_type else ("link" if attachment_link.strip() else ""),
+                    "attachment_type": "link" if attachment_link.strip() else "",
                     "attachment_link": attachment_link.strip(),
-                    "attachment_b64": attachment_b64,
+                    "attachment_b64": "",
                     "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
                     "created_by": st.session_state.get("username", ""),
                 }
@@ -1202,15 +1219,13 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                 topic = st.selectbox("Topic", topic_options, key=f"targeted_topic_{selected_code}")
                 due_date = st.date_input("Due date", key=f"targeted_due_{selected_code}")
                 instructions = st.text_area("Instructions", key=f"targeted_instructions_{selected_code}")
-                attachment_link = st.text_input("Attachment link (optional)", key=f"targeted_link_{selected_code}")
-                attachment_file = st.file_uploader("Or upload an image (optional)", type=["png", "jpg", "jpeg", "webp", "heic", "heif"], key=f"targeted_upload_{selected_code}")
+                attachment_link = st.text_input("Attachment link (e.g. a Google Drive link)", key=f"targeted_link_{selected_code}")
                 submitted = st.form_submit_button("Publish targeted practice")
 
             if submitted:
                 if not title.strip():
                     st.warning("Please add a title first.")
                 else:
-                    attachment_type, attachment_b64 = encode_uploaded_file(attachment_file)
                     row = {
                         "assignment_id": make_record_id("practice"),
                         "class_code": selected_code,
@@ -1219,9 +1234,9 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
                         "title": title.strip(),
                         "instructions": instructions.strip(),
                         "due_date": str(due_date),
-                        "attachment_type": attachment_type if attachment_type else ("link" if attachment_link.strip() else ""),
+                        "attachment_type": "link" if attachment_link.strip() else "",
                         "attachment_link": attachment_link.strip(),
-                        "attachment_b64": attachment_b64,
+                        "attachment_b64": "",
                         "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
                         "created_by": st.session_state.get("username", ""),
                     }
