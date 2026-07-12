@@ -600,6 +600,16 @@ def save_teacher_comment(row: dict) -> bool:
     df = pd.DataFrame([row])
     return upsert_dataframe_to_worksheet("TeacherComments", df, TEACHER_COMMENT_COLS, ["comment_id"])
 
+def delete_teacher_comment(comment_id: str) -> bool:
+    comment_id = (comment_id or "").strip()
+    if not comment_id:
+        return False
+    comments_df = load_teacher_comments_df()
+    if comments_df.empty or "comment_id" not in comments_df.columns:
+        return False
+    remaining_df = comments_df[comments_df["comment_id"].astype(str).str.strip() != comment_id]
+    return replace_dataframe_in_worksheet("TeacherComments", remaining_df, TEACHER_COMMENT_COLS)
+
 def _clean_sheet_value(value) -> str:
     if value is None:
         return ""
@@ -1045,6 +1055,54 @@ def render_login() -> None:
                 st.rerun()
             else:
                 raise
+
+    with st.expander("Forgot your password?"):
+        st.caption("Enter your username and the email you signed up with to verify your identity.")
+        with st.form("forgot_password_form", clear_on_submit=False):
+            fp_username = st.text_input("Username", key="fp_username")
+            fp_email = st.text_input("Email", key="fp_email")
+            fp_submitted = st.form_submit_button("Verify Identity")
+
+        if fp_submitted:
+            fp_username_norm = fp_username.strip().lower()
+            fp_email_norm = fp_email.strip().lower()
+            user_record = credentials["usernames"].get(fp_username_norm)
+            if fp_email_norm and user_record and str(user_record.get("email", "")).strip().lower() == fp_email_norm:
+                st.session_state["fp_verified_username"] = fp_username_norm
+                st.success("Identity verified. Set a new password below.")
+            else:
+                st.session_state.pop("fp_verified_username", None)
+                st.error("No account found with that username and email combination.")
+
+        verified_username = st.session_state.get("fp_verified_username")
+        if verified_username and verified_username in credentials["usernames"]:
+            hint = str(credentials["usernames"][verified_username].get("password_hint", "")).strip()
+            if hint:
+                st.info(f"Your saved password hint: {hint}")
+
+            with st.form("reset_password_form", clear_on_submit=True):
+                new_password = st.text_input("New password", type="password", key="fp_new_password")
+                confirm_password = st.text_input("Confirm new password", type="password", key="fp_confirm_password")
+                reset_submitted = st.form_submit_button("Reset Password")
+
+            if reset_submitted:
+                if len(new_password) < 6:
+                    st.error("Password must be at least 6 characters.")
+                elif new_password != confirm_password:
+                    st.error("Passwords do not match.")
+                else:
+                    users_df = load_users_df()
+                    username_col = users_df["username"].astype(str).str.strip().str.lower()
+                    if not (username_col == verified_username).any():
+                        st.error("Could not find that account to update. Try again.")
+                    else:
+                        hashed_new_password = Hasher.hash(new_password)
+                        users_df.loc[username_col == verified_username, "password"] = hashed_new_password
+                        if save_dataframe_to_worksheet("Users", users_df, USER_COLS):
+                            st.success("Password reset! You can log in with your new password now.")
+                            st.session_state.pop("fp_verified_username", None)
+                        else:
+                            st.error("Password reset failed to save. Try again.")
 
 def get_current_user_profile() -> dict:
     current_username = st.session_state.get("username", "")
@@ -1502,6 +1560,7 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
             created_at = str(row.get("created_at", "")).strip()
             message_text = str(row.get("message", "")).strip()
             topic = str(row.get("topic", "")).strip()
+            comment_id = str(row.get("comment_id", "")).strip()
             sender = str(row.get("created_by", "")).strip().lower()
             bubble_role = "assistant" if sender != student_username.strip().lower() else "user"
             sender_label = "Teacher" if bubble_role == "assistant" else student_data.get("first_name", student_username) or student_username
@@ -1510,6 +1569,12 @@ def render_teacher_student_chatbox(class_code: str, student_username: str, stude
                 if topic:
                     st.caption(f"Topic: {topic}")
                 st.write(message_text or " ")
+                if comment_id and st.button("🗑️ Delete", key=f"delete_chat_comment_{comment_id}"):
+                    if delete_teacher_comment(comment_id):
+                        st.success("Message deleted.")
+                        st.rerun()
+                    else:
+                        st.error("Could not delete that message. Try again.")
 
     with st.form(f"teacher_chat_form_{class_code}_{student_username}", clear_on_submit=True):
         chat_topic = st.selectbox(
@@ -1675,9 +1740,16 @@ def render_teacher_assignments_and_comments(selected_code: str, teacher_classes:
             else:
                 for _, row in comments_df.iloc[::-1].iterrows():
                     recipient = "Class" if str(row.get("scope", "")).strip() == "class" else f"@{row.get('username', '')}"
+                    comment_id = str(row.get("comment_id", "")).strip()
                     with st.container(border=True):
                         st.caption(f"To {recipient} | Topic: {row.get('topic', 'No topic') or 'No topic'} | {row.get('created_at', '')}")
                         st.write(str(row.get("message", "")).strip())
+                        if comment_id and st.button("🗑️ Delete", key=f"delete_comment_{comment_id}"):
+                            if delete_teacher_comment(comment_id):
+                                st.success("Comment deleted.")
+                                st.rerun()
+                            else:
+                                st.error("Could not delete that comment. Try again.")
 
 def render_teacher_dashboard() -> None:
     global teacher_detail_page
