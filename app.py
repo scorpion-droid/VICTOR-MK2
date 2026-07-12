@@ -188,6 +188,29 @@ def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
         st.error(f"Failed writing data to sheet tab '{worksheet_name}': {e}")
         return False
 
+def append_dataframe_to_worksheet(worksheet_name: str, df: pd.DataFrame, target_columns: list[str]) -> bool:
+    if not gc or not SPREADSHEET_ID:
+        st.error("Database initialization failed. Cannot save.")
+        return False
+    try:
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        worksheet = sh.worksheet(worksheet_name)
+
+        working_df = df.copy()
+        for col in target_columns:
+            if col not in working_df.columns:
+                working_df[col] = ""
+
+        rows = working_df[target_columns].fillna("").astype(str).values.tolist()
+        if not rows:
+            return True
+
+        worksheet.append_rows(rows, value_input_option="USER_ENTERED", insert_data_option="INSERT_ROWS")
+        return True
+    except Exception as e:
+        st.error(f"Failed appending data to sheet tab '{worksheet_name}': {e}")
+        return False
+
 def replace_dataframe_in_worksheet(worksheet_name, df, target_columns):
     if not gc or not SPREADSHEET_ID:
         st.error("Database initialization failed. Cannot save.")
@@ -1045,10 +1068,12 @@ def render_student_checker_page(topic: str) -> None:
     ocr_text_key = f"ocr_text_{slug}"
     ocr_ready_key = f"ocr_ready_{slug}"
     ocr_blocks_key = f"ocr_blocks_{slug}"
+    ocr_saved_notice_key = f"ocr_saved_notice_{slug}"
 
     st.session_state.setdefault(ocr_text_key, "")
     st.session_state.setdefault(ocr_ready_key, False)
     st.session_state.setdefault(ocr_blocks_key, [])
+    st.session_state.setdefault(ocr_saved_notice_key, "")
 
     st.title("V.I.C.T.O.R")
     st.subheader(f"{topic} — Upload your steps for verification (Class Code: `{user_profile.get('class_code', 'Unassigned')}`)")
@@ -1059,6 +1084,7 @@ def render_student_checker_page(topic: str) -> None:
         if st.session_state.get(last_file_key) != current_file_name:
             st.session_state[last_file_key] = current_file_name
             reset_ocr_state(slug)
+            st.session_state[ocr_saved_notice_key] = ""
 
         if st.button("Run OCR", key=f"run_ocr_{slug}"):
             with st.spinner('Analyzing handwriting and verifying steps...'):
@@ -1090,6 +1116,8 @@ def render_student_checker_page(topic: str) -> None:
 
         if st.session_state[ocr_ready_key]:
             st.info("Review each OCR question below, fix any symbol mistakes, and tick the ones you want checked.")
+            if st.session_state.get(ocr_saved_notice_key):
+                st.success(st.session_state[ocr_saved_notice_key])
 
             question_blocks = st.session_state.get(ocr_blocks_key, [])
             if not question_blocks:
@@ -1114,9 +1142,9 @@ def render_student_checker_page(topic: str) -> None:
 
             if st.button("Confirm OCR and Check Selected Questions", key=f"confirm_{slug}"):
                 known_categories = get_categories_for_class(user_profile.get("class_code", ""))
-                history_df = load_history_df()
-                new_logs = []
                 checked_count = 0
+                saved_count = 0
+                saved_question_labels: list[str] = []
 
                 for index, _block in enumerate(question_blocks, start=1):
                     include_key = f"ocr_include_{slug}_{index}"
@@ -1154,7 +1182,7 @@ def render_student_checker_page(topic: str) -> None:
 
                     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H-%M")
                     numbered_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(steps))
-                    new_logs.append({
+                    new_row = {
                         "username": username,
                         "class_code": user_profile.get("class_code", ""),
                         "date": timestamp,
@@ -1163,15 +1191,23 @@ def render_student_checker_page(topic: str) -> None:
                         "message": result.message,
                         "error_category": error_category_str,
                         "topic": topic,
-                    })
+                    }
+
+                    if append_dataframe_to_worksheet("History", pd.DataFrame([new_row]), HISTORY_COLS):
+                        saved_count += 1
+                        saved_question_labels.append(f"Question {index}")
+                    else:
+                        st.error(f"Could not save Question {index} to history. The earlier questions were already checked.")
 
                 if checked_count == 0:
                     st.warning("Pick at least one question to check.")
-                elif new_logs:
-                    updated_history = pd.concat([history_df, pd.DataFrame(new_logs)], ignore_index=True)
-                    save_dataframe_to_worksheet("History", updated_history, HISTORY_COLS)
-                    st.success(f"Checked {checked_count} question(s).")
-                    st.rerun()
+                elif saved_count:
+                    st.session_state[ocr_saved_notice_key] = (
+                        f"Saved {saved_count} checked question(s): {', '.join(saved_question_labels)}."
+                    )
+                    st.success(st.session_state[ocr_saved_notice_key])
+                else:
+                    st.warning("The questions were checked, but nothing could be saved yet. Please try again.")
 
 def render_student_history_page() -> None:
     st.title("Your Performance History")
