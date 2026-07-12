@@ -20,7 +20,6 @@ from App.checker import detect_first_error
 
 st.set_page_config(page_title="V.I.C.T.O.R", layout="centered")
 
-# Initialize connections
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 @st.cache_resource(ttl=0)
@@ -28,7 +27,7 @@ def get_gspread_client():
     try:
         creds_dict = dict(st.secrets["gserviceaccount"])
         sheet_id = creds_dict.get("spreadsheet_id")
-        # Strip out the non-standard gspread config key before passing to authorization
+
         if "spreadsheet_id" in creds_dict:
             del creds_dict["spreadsheet_id"]
         gc = gspread.service_account_from_dict(creds_dict)
@@ -39,7 +38,6 @@ def get_gspread_client():
 
 gc, SPREADSHEET_ID = get_gspread_client()
 
-# Safe database readers using the public connection manager
 def load_users_df():
     fallback = st.session_state.get("_last_good_users_df", pd.DataFrame(columns=USER_COLS))
     try:
@@ -157,7 +155,6 @@ def normalize_auth_df(df: pd.DataFrame) -> pd.DataFrame:
 
     return normalized
 
-# Bulletproof direct cell-matrix overwriter for saving modifications
 def save_dataframe_to_worksheet(worksheet_name, df, target_columns):
     if not gc or not SPREADSHEET_ID:
         st.error("Database initialization failed. Cannot save.")
@@ -257,6 +254,9 @@ ASSIGNMENT_STATUS_COLS = [
     "username",
     "status",
     "completed_at",
+    "title",
+    "topic",
+    "due_date",
 ]
 
 DEFAULT_TOPICS = [
@@ -537,8 +537,73 @@ def save_teacher_comment(row: dict) -> bool:
     df = pd.DataFrame([row])
     return upsert_dataframe_to_worksheet("TeacherComments", df, TEACHER_COMMENT_COLS, ["comment_id"])
 
+def _clean_sheet_value(value) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"nan", "<na>", "none"} else text
+
+def _resolve_assignment_completion_id(row: dict) -> str:
+    direct_id = _clean_sheet_value(row.get("assignment_id", ""))
+    if direct_id:
+        return direct_id
+
+    assignment_type = _clean_sheet_value(row.get("assignment_type", "")).lower()
+    class_code = _clean_sheet_value(row.get("class_code", "")).lower()
+    username = _clean_sheet_value(row.get("username", "")).lower()
+    title = _clean_sheet_value(row.get("title", ""))
+    topic = _clean_sheet_value(row.get("topic", ""))
+    due_date = _clean_sheet_value(row.get("due_date", ""))
+
+    if assignment_type == "targeted_practice" and class_code and username:
+        source_df = get_targeted_practice_for_student(class_code, username)
+    elif class_code:
+        source_df = get_teacher_assignments_for_class(class_code)
+    else:
+        source_df = pd.DataFrame()
+
+    if source_df.empty or "assignment_id" not in source_df.columns:
+        return ""
+
+    working_df = source_df.copy()
+    for col in ("class_code", "username", "title", "topic", "due_date"):
+        if col in working_df.columns:
+            working_df[col] = working_df[col].fillna("").astype(str).str.strip()
+
+    mask = pd.Series(True, index=working_df.index)
+    if class_code and "class_code" in working_df.columns:
+        mask &= working_df["class_code"].str.lower() == class_code
+    if username and "username" in working_df.columns:
+        mask &= working_df["username"].str.lower() == username
+    if title and "title" in working_df.columns:
+        mask &= working_df["title"] == title
+    if topic and "topic" in working_df.columns:
+        mask &= working_df["topic"] == topic
+    if due_date and "due_date" in working_df.columns:
+        mask &= working_df["due_date"] == due_date
+
+    matches = working_df[mask]
+    if matches.empty:
+        return ""
+
+    return _clean_sheet_value(matches.iloc[0].get("assignment_id", ""))
+
 def save_assignment_completion(row: dict) -> bool:
-    df = pd.DataFrame([row])
+    normalized_row = {col: "" for col in ASSIGNMENT_STATUS_COLS}
+    for key in ("assignment_type", "class_code", "username", "status", "completed_at", "title", "topic", "due_date"):
+        normalized_row[key] = _clean_sheet_value(row.get(key, ""))
+    normalized_row["assignment_id"] = _resolve_assignment_completion_id(row)
+
+    if not normalized_row["assignment_id"]:
+        st.error("Could not save completion because the assignment ID is missing.")
+        return False
+
+    df = pd.DataFrame([normalized_row])
     return upsert_dataframe_to_worksheet("AssignmentStatus", df, ASSIGNMENT_STATUS_COLS, ["assignment_id", "username"])
 
 def summarize_topic_counts(history_df: pd.DataFrame) -> pd.DataFrame:
@@ -632,9 +697,6 @@ def get_growth_prediction(history_df: pd.DataFrame, topic_filter: str, status_fi
     attempts = len(recent)
     latest_status = recent["status"].iloc[-1]
 
-    # Cache keyed on the actual computed stats, not on call site or widget
-    # state, so this only calls Gemini again when the underlying data has
-    # genuinely changed rather than on every unrelated rerun/click.
     cache_key = f"prediction_cache:{topic_filter}:{status_filter}:{attempts}:{start_rate:.1f}:{end_rate:.1f}:{latest_status}"
     cached = st.session_state.get(cache_key)
     if cached:
@@ -926,9 +988,7 @@ def get_current_user_profile() -> dict:
     if profile:
         st.session_state["last_known_profile"] = profile
         return profile
-    # Live read for this rerun didn't include this user (transient sheet
-    # issue) — reuse the last profile we actually confirmed rather than
-    # silently showing an empty one.
+    
     return st.session_state.get("last_known_profile", {})
 
 def _topic_slug(topic: str) -> str:
@@ -1086,14 +1146,18 @@ def render_assignment_card(assignment: pd.Series, assignment_type: str, completi
             st.success("Marked as done")
         else:
             if st.button("Mark as done", key=f"done_{assignment_type}_{assignment_id}"):
-                completion_row = {
+                completion_row = assignment.to_dict()
+                completion_row.update({
                     "assignment_id": assignment_id,
                     "assignment_type": assignment_type,
                     "class_code": str(assignment.get("class_code", "")).strip().lower(),
                     "username": st.session_state.get("username", ""),
                     "status": "done",
                     "completed_at": datetime.datetime.now().strftime("%Y-%m-%d %H-%M"),
-                }
+                    "title": title,
+                    "topic": topic,
+                    "due_date": due_date,
+                })
                 if save_assignment_completion(completion_row):
                     st.success("Saved. Honor code complete.")
                     st.rerun()
@@ -1628,16 +1692,9 @@ if auth_status:
     user_profile = credentials["usernames"].get(username, {})
 
     if user_profile:
-        # Genuine profile found in this rerun's credentials read — trust it,
-        # and remember it in case a future rerun's read is transiently empty.
         user_role = user_profile.get('role', 'student')
         st.session_state["roles"] = user_role
     else:
-        # The live Users-sheet read for this rerun came back without this
-        # user (e.g. a transient Google Sheets error/rate limit — see
-        # load_users_df's exception fallback). Do NOT silently treat an
-        # already-authenticated user as a brand-new student in that case;
-        # fall back to whatever role we last confirmed for this session.
         user_role = st.session_state.get("roles", "student")
 
     if user_role == "teacher":
